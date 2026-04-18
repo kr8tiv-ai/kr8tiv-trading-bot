@@ -8,7 +8,7 @@ progress:
   total_phases: 10
   completed_phases: 0
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # State: kr8tiv-mexc-bot
@@ -29,13 +29,13 @@ progress:
 
 ## Current Position
 
-Phase: 01 (foundation) — EXECUTING
-Plan: 6 of 6 (LAST plan of Phase 1)
-**Status:** Plan 01-05 closed. `apps/core` package lands the full 10-step boot orchestrator + `pnpm smoke` + `pnpm dev` entry points. 9 unit tests green + 2 gitleaks tests conditionally skipped (gitleaks not on PATH). 10/10 workspace typecheck green. Live smoke run (2026-04-18 16:41) correctly hit the pre-flight fail path (exit 1, listed all 3 missing secrets in one fatal log) — proves FND-08 negative case. Happy-path exit 0 triggers once `pnpm setup:credentials` runs. Next: Plan 01-06 (docs — phase-1-readiness.md + setup-windows.md for FND-11).
-**Progress:** 5/6 plans in Phase 1 complete
+Phase: 01 (foundation) — ALL 6 PLANS CODE-COMPLETE, pending Matt's readiness sign-off
+Plan: 6 of 6 — Task 1 (docs) done, Task 2 (human-verify) pending
+**Status:** Plan 01-06 Task 1 closed (commit `9d1c274`). `docs/phase-1-readiness.md` + `docs/setup-windows.md` both on disk. Plan 01-06 Task 2 is a `checkpoint:human-verify` — Matt opens MEXC UI, checks key perms per checklist §1, runs `pnpm setup:credentials` + `pnpm smoke` (expected exit 0), edits `signed_by` field in the readiness doc, commits. That commit is the structural gate to Phase 2.
+**Progress:** 6/6 plans in Phase 1 code-complete. Phase 1 itself closes when the readiness doc is signed.
 
 ```
-[>] Phase 1: Foundation                                (5/6 plans — 01-01..01-05 closed)
+[>] Phase 1: Foundation                                (6/6 plans code-complete; pending sign-off)
 [·] Phase 2: Execution Skeleton                        (0 plans)
 [·] Phase 3: Telegram Approval Loop                    (0 plans)
 [·] Phase 4: Style Fingerprint + Rule Signal + Leak    (0 plans)
@@ -64,6 +64,7 @@ Plan: 6 of 6 (LAST plan of Phase 1)
 | 01-03 | ~25 min inline | 2     | 13 created + 2 modified | Bumped better-sqlite3 11→12 for Node 24 prebuilts; ioredis import pattern fixed for verbatimModuleSyntax; live Redis tests conditional on TCP probe; 11 tests green + 2 skipped; 3 atomic commits `f6a7532` / `c618cc9` / `1be7211` |
 | 01-04 | ~35 min inline | 3     | 17 created + 4 modified | shared-schemas populated with 4 Zod schemas + AccountInfo type; MEXCSpotClient (auth'd read-only) + MEXCFuturesClient (public ping stub); 20 unit tests + 3 live tests gated behind `MEXC_LIVE=1`; 3 atomic commits `e2c385c` / `84b8c17` / `ffbc15a`; ccxt imported in exactly 2 files |
 | 01-05 | ~40 min inline | 3     | 8 created | apps/core boot.ts (10-step DI orchestrator) + smoke.ts + dev.ts + boot.test.ts (8 mocked tests) + gitleaks.test.ts (gated on gitleaks binary); 9 tests green + 2 skipped; 1 commit `408eef3`; live smoke proved pre-flight fail path (exit 1 with all 3 missing secrets listed at once) |
+| 01-06 | ~15 min inline | 1 (of 2) | 2 created | docs/phase-1-readiness.md (FND-11 checklist reflecting full-perm key + portable Redis reality) + docs/setup-windows.md (no-admin install paths, troubleshooting); 1 commit `9d1c274`; Task 2 human-verify checkpoint pending Matt |
 
 ## Accumulated Context
 
@@ -89,8 +90,8 @@ Plan: 6 of 6 (LAST plan of Phase 1)
 - [x] Plan 01-03 — @kr8tiv/redis-client + @kr8tiv/db (11 tests green + 2 skipped pending Memurai install, 3 atomic commits; later flipped to 5/6 when portable Redis 5.0.14 landed)
 - [x] Plan 01-04 — @kr8tiv/shared-schemas + @kr8tiv/mexc-spot + @kr8tiv/mexc-futures (20 unit tests green + 3 live tests MEXC_LIVE=1 gated, 3 atomic commits `e2c385c`/`84b8c17`/`ffbc15a`; FND-06+FND-07)
 - [x] Plan 01-05 — apps/core boot.ts + smoke.ts + dev.ts + boot.test.ts + gitleaks.test.ts (9 tests green + 2 gitleaks-gated; commit `408eef3`; FND-08+FND-10 pre-flight path proven, happy-path pending creds)
-- [ ] **NEXT:** Plan 01-06 — docs/phase-1-readiness.md (FND-11 operator checklist — reflects full-permission key decision) + docs/setup-windows.md (reproducibility runbook) — closes Phase 1
-- [ ] Matt: provision creds via `pnpm setup:credentials` → `pnpm smoke` should exit 0 (proves FND-08 happy path); optional: `winget install gitleaks.gitleaks` to flip 2 skipped gitleaks tests green
+- [x] Plan 01-06 Task 1 — docs/phase-1-readiness.md + docs/setup-windows.md (commit `9d1c274`; FND-11 docs shipped, reflects full-permission key decision + portable Redis fallback + gitleaks gating reality)
+- [ ] **PENDING (Matt):** Plan 01-06 Task 2 — run `pnpm setup:credentials` → `pnpm smoke` (expect exit 0) → edit `docs/phase-1-readiness.md` signed_by block → commit. That commit closes Phase 1.
 - [ ] Plan 01-05 — apps/core boot.ts + smoke.ts
 - [ ] Plan 01-06 — docs/phase-1-readiness.md + docs/setup-windows.md
 - [ ] Matt runs `pnpm setup:credentials` (interactive prompt for 3 MEXC secrets) then `pnpm verify-env` — new from Plan 01-02

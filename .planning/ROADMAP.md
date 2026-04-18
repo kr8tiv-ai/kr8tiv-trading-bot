@@ -9,7 +9,7 @@
 
 ## Phases
 
-- [>] **Phase 1: Foundation** — Scaffold + secrets + MEXC read access with two-client separation (5/6 plans complete — 01-01 scaffold+bootstrap, 01-02 config/logger/secrets, 01-03 redis-client/db, 01-04 mexc-spot+futures, 01-05 apps/core boot+smoke)
+- [>] **Phase 1: Foundation** — Scaffold + secrets + MEXC read access with two-client separation (6/6 plans complete — 01-01 scaffold+bootstrap, 01-02 config/logger/secrets, 01-03 redis-client/db, 01-04 mexc-spot+futures, 01-05 apps/core boot+smoke, 01-06 readiness docs; phase-close pending Matt's sign-off of docs/phase-1-readiness.md)
 - [ ] **Phase 2: Execution Skeleton** — MEXC spot write path with safety rails ($10-aware sizing)
 - [ ] **Phase 3: Telegram Approval Loop** — grammY bot with inline Approve/Reject, 90s TTL, style-conflict card
 - [ ] **Phase 4: Style Fingerprint + Rule Signal + First Leak** — EMA/ADX rule signal, revenge-trade detector
@@ -38,7 +38,7 @@
 - [x] 01-03-PLAN.md — @kr8tiv/redis-client (ioredis factory + ping helper) + @kr8tiv/db (better-sqlite3 WAL + synchronous=FULL + foreign_keys=ON) (FND-02, FND-03) — SUMMARY 2026-04-18, 3 atomic commits f6a7532 / c618cc9 / 1be7211; 11 tests green + 2 live-Redis tests conditionally skipped until Memurai install
 - [x] 01-04-PLAN.md — @kr8tiv/mexc-spot + @kr8tiv/mexc-futures (two separate CCXT instances, read-only Phase 1 scope, config-driven base URLs, Zod-validated responses) (FND-06, FND-07) — SUMMARY 2026-04-18, 3 atomic commits e2c385c / 84b8c17 / ffbc15a; 20 unit tests green + 3 live tests gated behind MEXC_LIVE=1
 - [x] 01-05-PLAN.md — apps/core boot.ts + smoke.ts + dev.ts; 10-step ordered boot sequence with Promise.allSettled dual-MEXC ping; `pnpm smoke` end-to-end (FND-08) — SUMMARY 2026-04-18, commit `408eef3`; 9 tests green + 2 gitleaks tests conditionally skipped; live smoke exit-1 pre-flight path proven, exit-0 happy path pending creds
-- [ ] 01-06-PLAN.md — docs/phase-1-readiness.md (FND-11 operator checklist: trading-only + no-withdraw + IP-whitelisted, signed by Matt) + docs/setup-windows.md reproducibility runbook (FND-11)
+- [x] 01-06-PLAN.md — docs/phase-1-readiness.md + docs/setup-windows.md (FND-11) — Task 1 landed (commit `9d1c274`), Task 2 human-verify pending Matt's sign-off on readiness doc
 
 ### Phase 2: Execution Skeleton
 **Goal**: The core process can place and kill a real spot order on MEXC for ETHUSDT, with every safety rail (idempotency, server-side stops, minNotional check, daily loss breaker, panic switch) enforced before any order leaves the process — but no signal or approval layer exists yet.

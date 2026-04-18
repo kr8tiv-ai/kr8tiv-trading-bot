@@ -19,7 +19,7 @@ Weekend MVP scope. Everything required to ship "one live ETH spot trade, approve
 - [~] **FND-08**: Boot-time smoke test pings both MEXC endpoints (spot ping + futures ping) and fails fast with a clear error if either is unreachable — satisfied by Plan 01-05 (commit `408eef3`). Pre-flight fail path verified live (exit 1 + missing-secrets list). Happy-path exit-0 verification pending Matt's `pnpm setup:credentials` run.
 - [x] **FND-09**: Structured logging via `pino` with automatic redaction of secret patterns (API keys, Telegram tokens, wallet addresses) — satisfied by Plan 01-02 (commit `cc1a55f`), 12 redaction tests green covering depth 1–3, Telegram/wallet scaffolds in place for Phase 3/7
 - [x] **FND-10**: `gitleaks` pre-commit hook installed and passing; no secrets ever reach git
-- [ ] **FND-11**: MEXC API key is provisioned trading-only (no withdrawals) and IP-whitelisted to the local Windows machine
+- [~] **FND-11**: MEXC API key is provisioned trading-only (no withdrawals) and IP-whitelisted to the local Windows machine — **AMENDED 2026-04-18:** Matt accepted a full-permission key (withdraw ON) with IP whitelist required. Readiness checklist + runbook docs shipped by Plan 01-06 (commit `9d1c274`); sign-off pending Matt's physical MEXC UI verification + `pnpm smoke` green + editing the `signed_by` field in `docs/phase-1-readiness.md`.
 
 ### Execution (EXEC) — MEXC spot write path with safety rails
 
