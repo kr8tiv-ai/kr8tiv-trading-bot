@@ -1,0 +1,15 @@
+{
+  "name": "@kr8tiv/scripts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@kr8tiv/config": "workspace:*",
+    "@kr8tiv/secrets": "workspace:*",
+    "@kr8tiv/shared-types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.7"
+  }
+}
