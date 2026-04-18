@@ -1,0 +1,27 @@
+{
+  "name": "@kr8tiv/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@kr8tiv/config": "workspace:*",
+    "better-sqlite3": "^12.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7",
+    "vitest": "^2.1",
+    "@types/better-sqlite3": "^7.6"
+  }
+}

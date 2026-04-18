@@ -90,4 +90,7 @@ logs/
 .env.local
 .env.*.local
 data/
+# Track the data/ directory itself (via .gitkeep) so SQLite can open the path
+# on a fresh clone without ENOENT — contents remain ignored.
+!data/.gitkeep
 
