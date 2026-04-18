@@ -8,7 +8,7 @@ progress:
   total_phases: 10
   completed_phases: 0
   total_plans: 6
-  completed_plans: 4
+  completed_plans: 5
 ---
 
 # State: kr8tiv-mexc-bot
@@ -30,12 +30,12 @@ progress:
 ## Current Position
 
 Phase: 01 (foundation) — EXECUTING
-Plan: 5 of 6 (next)
-**Status:** Plan 01-04 closed. @kr8tiv/shared-schemas + @kr8tiv/mexc-spot + @kr8tiv/mexc-futures landed with 20 unit tests green and 9/9 workspace typechecks. 3 live tests (spot ping, spot balance, futures public ping) are gated behind `MEXC_LIVE=1` — will flip green when Matt runs `pnpm setup:credentials` (creds) followed by `$env:MEXC_LIVE=1; pnpm -F @kr8tiv/mexc-spot test; pnpm -F @kr8tiv/mexc-futures test`. Portable Redis 5.0.14 still running on 127.0.0.1:6379 for FND-03. Next: Plan 01-05 (`apps/core/boot.ts` + `smoke.ts` — the 10-step boot sequence chaining everything together).
-**Progress:** 4/6 plans in Phase 1 complete
+Plan: 6 of 6 (LAST plan of Phase 1)
+**Status:** Plan 01-05 closed. `apps/core` package lands the full 10-step boot orchestrator + `pnpm smoke` + `pnpm dev` entry points. 9 unit tests green + 2 gitleaks tests conditionally skipped (gitleaks not on PATH). 10/10 workspace typecheck green. Live smoke run (2026-04-18 16:41) correctly hit the pre-flight fail path (exit 1, listed all 3 missing secrets in one fatal log) — proves FND-08 negative case. Happy-path exit 0 triggers once `pnpm setup:credentials` runs. Next: Plan 01-06 (docs — phase-1-readiness.md + setup-windows.md for FND-11).
+**Progress:** 5/6 plans in Phase 1 complete
 
 ```
-[>] Phase 1: Foundation                                (4/6 plans — 01-01/02/03/04 closed)
+[>] Phase 1: Foundation                                (5/6 plans — 01-01..01-05 closed)
 [·] Phase 2: Execution Skeleton                        (0 plans)
 [·] Phase 3: Telegram Approval Loop                    (0 plans)
 [·] Phase 4: Style Fingerprint + Rule Signal + Leak    (0 plans)
@@ -63,6 +63,7 @@ Plan: 5 of 6 (next)
 | 01-02 | ~30 min inline | 3     | 21 created + 3 modified | All subprocess run via PowerShell MCP (bash fork blocker still in effect); 18 tests green; 3 atomic commits `cc1a55f` / `6b5af57` / `a94e3bd` |
 | 01-03 | ~25 min inline | 2     | 13 created + 2 modified | Bumped better-sqlite3 11→12 for Node 24 prebuilts; ioredis import pattern fixed for verbatimModuleSyntax; live Redis tests conditional on TCP probe; 11 tests green + 2 skipped; 3 atomic commits `f6a7532` / `c618cc9` / `1be7211` |
 | 01-04 | ~35 min inline | 3     | 17 created + 4 modified | shared-schemas populated with 4 Zod schemas + AccountInfo type; MEXCSpotClient (auth'd read-only) + MEXCFuturesClient (public ping stub); 20 unit tests + 3 live tests gated behind `MEXC_LIVE=1`; 3 atomic commits `e2c385c` / `84b8c17` / `ffbc15a`; ccxt imported in exactly 2 files |
+| 01-05 | ~40 min inline | 3     | 8 created | apps/core boot.ts (10-step DI orchestrator) + smoke.ts + dev.ts + boot.test.ts (8 mocked tests) + gitleaks.test.ts (gated on gitleaks binary); 9 tests green + 2 skipped; 1 commit `408eef3`; live smoke proved pre-flight fail path (exit 1 with all 3 missing secrets listed at once) |
 
 ## Accumulated Context
 
@@ -87,8 +88,9 @@ Plan: 5 of 6 (next)
 - [x] Plan 01-02 — @kr8tiv/config + @kr8tiv/secrets + @kr8tiv/logger + credentials scripts (18 tests green, 3 atomic commits)
 - [x] Plan 01-03 — @kr8tiv/redis-client + @kr8tiv/db (11 tests green + 2 skipped pending Memurai install, 3 atomic commits; later flipped to 5/6 when portable Redis 5.0.14 landed)
 - [x] Plan 01-04 — @kr8tiv/shared-schemas + @kr8tiv/mexc-spot + @kr8tiv/mexc-futures (20 unit tests green + 3 live tests MEXC_LIVE=1 gated, 3 atomic commits `e2c385c`/`84b8c17`/`ffbc15a`; FND-06+FND-07)
-- [ ] **NEXT:** Plan 01-05 — apps/core boot.ts + smoke.ts (FND-08) — 10-step boot sequence chaining secrets → config → logger → Redis ping → SQLite open → MEXC Promise.allSettled ping; `pnpm smoke` is the end-to-end proof
-- [ ] Matt: provision creds via `pnpm setup:credentials` + run `$env:MEXC_LIVE=1; pnpm -F @kr8tiv/mexc-spot test; pnpm -F @kr8tiv/mexc-futures test` to flip 3 live MEXC tests green
+- [x] Plan 01-05 — apps/core boot.ts + smoke.ts + dev.ts + boot.test.ts + gitleaks.test.ts (9 tests green + 2 gitleaks-gated; commit `408eef3`; FND-08+FND-10 pre-flight path proven, happy-path pending creds)
+- [ ] **NEXT:** Plan 01-06 — docs/phase-1-readiness.md (FND-11 operator checklist — reflects full-permission key decision) + docs/setup-windows.md (reproducibility runbook) — closes Phase 1
+- [ ] Matt: provision creds via `pnpm setup:credentials` → `pnpm smoke` should exit 0 (proves FND-08 happy path); optional: `winget install gitleaks.gitleaks` to flip 2 skipped gitleaks tests green
 - [ ] Plan 01-05 — apps/core boot.ts + smoke.ts
 - [ ] Plan 01-06 — docs/phase-1-readiness.md + docs/setup-windows.md
 - [ ] Matt runs `pnpm setup:credentials` (interactive prompt for 3 MEXC secrets) then `pnpm verify-env` — new from Plan 01-02
