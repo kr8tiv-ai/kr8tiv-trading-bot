@@ -7,10 +7,23 @@ secrets/
 *.key
 *.pem
 *.secret
+*.token
 .dev.vars
 credentials.json
 keys.json
 **/secrets.*
+
+# GitHub Personal Access Tokens (belt & braces — pre-commit hook + patterns)
+# Tokens live in Windows Credential Manager (target: kr8tiv-mexc-bot/github-pat), never in files.
+# These globs catch accidental token dumps to disk from `gh auth` / scripts.
+.github-token
+github_pat_*
+.gh_token
+*.pat.txt
+
+# MEXC creds (same principle — WCM only, never on disk)
+.mexc-keys
+mexc_*.json
 
 # --- Node / pnpm ---
 node_modules/
