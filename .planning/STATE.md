@@ -96,7 +96,7 @@ Plan: 4 of 6 (next)
 
 - **Claude agent shell environment (workaround established 2026-04-18):** Matt's Windows 11 machine has broken Git Bash / Cygwin (fork errors) which blocks the Claude agent's Bash tool. Worked around for Plans 01-02 + 01-03 by running all subprocess through Desktop Commander + Windows-MCP PowerShell sessions + `git -c core.hooksPath=/dev/null --no-verify`. Same pattern works for 01-04 + 01-05.
 - **FND-11 security posture (open):** using full-permission MEXC key per 2026-04-18 decision above. Readiness doc (01-06) must reflect this. Re-evaluate before VPS deploy (Phase 10).
-- **Memurai install (in-flight 2026-04-18):** `winget install Memurai.MemuraiDeveloper --silent` launched but MSI may be stuck on UAC. Check `Get-Service Memurai` — if still missing, Matt accepts any UAC prompt, then `Start-Service Memurai` to unskip Plan 01-03's live Redis tests.
+- **Redis for Phase 1 (resolved 2026-04-18):** Memurai MSI install kept hitting exit 1603 (admin elevation blocked). Matt reported recurring CPU-process interference on his box that also breaks SmartScreen admin prompts. Worked around by downloading portable **tporadowski/redis v5.0.14** ZIP to `%USERPROFILE%\tools\redis-portable\` — no admin, no UAC. `redis-server.exe --port 6379 --maxmemory 256mb --maxmemory-policy noeviction` started as user process. FND-03 live tests all green against it. **Matt needs to relaunch redis-server.exe after reboot** (it's not a Windows Service) — see `docs/setup-windows.md` (Plan 01-06). Future: revisit Memurai or WSL Redis when the machine environment stabilizes.
 
 ### Open Research Questions (flagged from SUMMARY.md)
 
