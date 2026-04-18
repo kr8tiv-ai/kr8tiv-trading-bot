@@ -1,0 +1,67 @@
+# --- Secrets (never commit) ---
+.env
+.env.*
+*.env.local
+secrets/
+.secrets/
+*.key
+*.pem
+*.secret
+.dev.vars
+credentials.json
+keys.json
+**/secrets.*
+
+# --- Node / pnpm ---
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Build output ---
+dist/
+build/
+out/
+.turbo/
+.next/
+coverage/
+*.tsbuildinfo
+
+# --- Python ML pipeline ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+
+# --- ML model artifacts ---
+# Allow model files but never the training data dumps
+models/*.pkl
+data/raw/
+data/cache/
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# --- Editor / OS ---
+.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# --- Local logs ---
+logs/
+*.log
+
+# --- Local-only planning scratch (never in git) ---
+.planning/local/
+.planning/scratch/
