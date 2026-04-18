@@ -1,0 +1,24 @@
+# lefthook.yml
+# Rust-binary pre-commit hooks. Survives broken Git Bash (no shell dependency).
+# Run `pnpm prepare` or `pnpm exec lefthook install` after clone to wire .git/hooks.
+
+pre-commit:
+  parallel: true
+  commands:
+    gitleaks:
+      run: gitleaks protect --staged --verbose --redact --config=.gitleaks.toml
+      fail_text: "Secret detected in staged changes. Commit blocked. Review output above."
+    biome-check:
+      glob: "*.{ts,tsx,js,jsx,json,jsonc,md}"
+      run: pnpm biome check --no-errors-on-unmatched {staged_files}
+      fail_text: "Biome lint/format errors. Run `pnpm lint:fix` to auto-fix."
+    typecheck:
+      glob: "*.{ts,tsx}"
+      run: pnpm turbo typecheck
+      fail_text: "TypeScript errors in workspace. Fix before committing."
+
+pre-push:
+  commands:
+    gitleaks-full:
+      run: gitleaks detect --verbose --redact --config=.gitleaks.toml
+      fail_text: "Secret detected in history. Push blocked."
