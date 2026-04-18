@@ -9,7 +9,7 @@ Weekend MVP scope. Everything required to ship "one live ETH spot trade, approve
 
 ### Foundation (FND) — scaffold, secrets, MEXC read access
 
-- [ ] **FND-01**: Project scaffolded as pnpm workspaces + Turborepo monorepo on Node.js 22 LTS + TypeScript 5.5+ strict
+- [x] **FND-01**: Project scaffolded as pnpm workspaces + Turborepo monorepo on Node.js 22 LTS + TypeScript 5.5+ strict
 - [ ] **FND-02**: SQLite database initialized with WAL journaling (`journal_mode=WAL`, `synchronous=FULL`) via `better-sqlite3`
 - [ ] **FND-03**: Redis instance reachable from core process; connectivity smoke-tested on boot (ioredis)
 - [ ] **FND-04**: `SecretProvider` abstraction with Windows Credential Manager implementation via `@zowe/secrets-for-zowe-sdk`
@@ -18,7 +18,7 @@ Weekend MVP scope. Everything required to ship "one live ETH spot trade, approve
 - [ ] **FND-07**: `MEXCFuturesClient` class stub (read-only methods only in v1) using CCXT, separate auth + rate bucket from spot client, base URL `contract.mexc.com` config-driven
 - [ ] **FND-08**: Boot-time smoke test pings both MEXC endpoints (spot ping + futures ping) and fails fast with a clear error if either is unreachable
 - [ ] **FND-09**: Structured logging via `pino` with automatic redaction of secret patterns (API keys, Telegram tokens, wallet addresses)
-- [ ] **FND-10**: `gitleaks` pre-commit hook installed and passing; no secrets ever reach git
+- [x] **FND-10**: `gitleaks` pre-commit hook installed and passing; no secrets ever reach git
 - [ ] **FND-11**: MEXC API key is provisioned trading-only (no withdrawals) and IP-whitelisted to the local Windows machine
 
 ### Execution (EXEC) — MEXC spot write path with safety rails
@@ -145,7 +145,7 @@ Populated by roadmap generation 2026-04-18. Every v1 and v2 requirement mapped t
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FND-01 | Phase 1 | Pending |
+| FND-01 | Phase 1 | Complete (Plan 01-01) |
 | FND-02 | Phase 1 | Pending |
 | FND-03 | Phase 1 | Pending |
 | FND-04 | Phase 1 | Pending |
@@ -154,7 +154,7 @@ Populated by roadmap generation 2026-04-18. Every v1 and v2 requirement mapped t
 | FND-07 | Phase 1 | Pending |
 | FND-08 | Phase 1 | Pending |
 | FND-09 | Phase 1 | Pending |
-| FND-10 | Phase 1 | Pending |
+| FND-10 | Phase 1 | Complete (Plan 01-01) |
 | FND-11 | Phase 1 | Pending |
 | EXEC-01 | Phase 2 | Pending |
 | EXEC-02 | Phase 2 | Pending |
@@ -233,4 +233,4 @@ Populated by roadmap generation 2026-04-18. Every v1 and v2 requirement mapped t
 
 ---
 *Requirements defined: 2026-04-18*
-*Last updated: 2026-04-18 after roadmap generation — traceability populated*
+*Last updated: 2026-04-17 after Plan 01-01 execution — FND-01, FND-10 marked complete*
