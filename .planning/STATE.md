@@ -8,7 +8,7 @@ progress:
   total_phases: 10
   completed_phases: 0
   total_plans: 6
-  completed_plans: 2
+  completed_plans: 3
 ---
 
 # State: kr8tiv-mexc-bot
@@ -30,12 +30,12 @@ progress:
 ## Current Position
 
 Phase: 01 (foundation) — EXECUTING
-Plan: 3 of 6 (next)
-**Status:** Plan 01-02 closed. @kr8tiv/config + @kr8tiv/logger + @kr8tiv/secrets + setup-credentials/verify-env scripts all landed with 18 tests green (12 logger redaction + 6 secrets round-trip against real WinCred). Bootstrap from Plan 01-01 was already run — node_modules populated, 4 original commits in git log. Next: Plan 01-03 (@kr8tiv/redis-client + @kr8tiv/db).
-**Progress:** 2/6 plans in Phase 1 complete
+Plan: 4 of 6 (next)
+**Status:** Plan 01-03 closed. @kr8tiv/redis-client + @kr8tiv/db landed with 11 tests green (4 ioredis unit + 7 better-sqlite3 live) + 2 live-Redis tests conditionally skipped pending Memurai install. 7/7 workspace typechecks green. Next: Plan 01-04 (@kr8tiv/mexc-spot + @kr8tiv/mexc-futures — needs live MEXC credentials via `pnpm setup:credentials`).
+**Progress:** 3/6 plans in Phase 1 complete
 
 ```
-[>] Phase 1: Foundation                                (2/6 plans — 01-01 + 01-02 closed)
+[>] Phase 1: Foundation                                (3/6 plans — 01-01/02/03 closed)
 [·] Phase 2: Execution Skeleton                        (0 plans)
 [·] Phase 3: Telegram Approval Loop                    (0 plans)
 [·] Phase 4: Style Fingerprint + Rule Signal + Leak    (0 plans)
@@ -61,6 +61,7 @@ Plan: 3 of 6 (next)
 | ----- | ------------- | ----- | ----- | -------------------------------------------------------- |
 | 01-01 | authored 1 session | 3     | 19 created + 1 modified | Subprocess execution deferred to bootstrap-phase-01-01.ps1 (since run by Matt — 4 commits in history) |
 | 01-02 | ~30 min inline | 3     | 21 created + 3 modified | All subprocess run via PowerShell MCP (bash fork blocker still in effect); 18 tests green; 3 atomic commits `cc1a55f` / `6b5af57` / `a94e3bd` |
+| 01-03 | ~25 min inline | 2     | 13 created + 2 modified | Bumped better-sqlite3 11→12 for Node 24 prebuilts; ioredis import pattern fixed for verbatimModuleSyntax; live Redis tests conditional on TCP probe; 11 tests green + 2 skipped; 3 atomic commits `f6a7532` / `c618cc9` / `1be7211` |
 
 ## Accumulated Context
 
@@ -83,8 +84,8 @@ Plan: 3 of 6 (next)
 - [x] Run `/gsd:plan-phase 1` to decompose Phase 1 into executable plans
 - [x] Plan 01-01 — scaffold authored + bootstrapped (4 commits in history)
 - [x] Plan 01-02 — @kr8tiv/config + @kr8tiv/secrets + @kr8tiv/logger + credentials scripts (18 tests green, 3 atomic commits)
-- [ ] **NEXT:** Plan 01-03 — @kr8tiv/redis-client + @kr8tiv/db (FND-02, FND-03)
-- [ ] Plan 01-04 — @kr8tiv/mexc-spot + @kr8tiv/mexc-futures
+- [x] Plan 01-03 — @kr8tiv/redis-client + @kr8tiv/db (11 tests green + 2 skipped pending Memurai install, 3 atomic commits)
+- [ ] **NEXT:** Plan 01-04 — @kr8tiv/mexc-spot + @kr8tiv/mexc-futures (FND-06, FND-07) — requires live MEXC credentials provisioned via `pnpm setup:credentials` before the auth'd read-only tests can run
 - [ ] Plan 01-05 — apps/core boot.ts + smoke.ts
 - [ ] Plan 01-06 — docs/phase-1-readiness.md + docs/setup-windows.md
 - [ ] Matt runs `pnpm setup:credentials` (interactive prompt for 3 MEXC secrets) then `pnpm verify-env` — new from Plan 01-02
@@ -115,6 +116,9 @@ Format: `YYYY-MM-DD | phase | decision | rationale`
 - 2026-04-18 | Phase 1 Plan 01-02 | `.gitignore` rule `secrets/` tightened to `/secrets/` + explicit `!packages/secrets/**` negation | Plan 01-01's rule pattern matched `packages/secrets/` too. Fixed retroactively with minimal blast radius.
 - 2026-04-18 | Phase 1 Plan 01-02 | `scripts/` promoted to workspace package (`@kr8tiv/scripts`, `type: module`) | Needed for tsc typecheck resolution of workspace deps + @types/node in `scripts/*.ts`. Updated `pnpm-workspace.yaml`.
 - 2026-04-18 | Phase 1 Plan 01-02 | Agent execution via PowerShell MCP session instead of `bootstrap-phase-01-02.ps1` | Earlier plan decision was "Bash broken → defer to PS1 script". Re-tested this session: Desktop Commander + Windows-MCP PowerShell both work for subprocess execution. Kept atomic-commit-per-task discipline but skipped the batch-script wrapper. Future plans (01-03+) can follow same inline pattern unless MCP breaks.
+- 2026-04-18 | Phase 1 Plan 01-03 | better-sqlite3 11.7 → 12.0 | 11.x does not ship Node 24 prebuilts. Matt runs Node 24 per .nvmrc. Without VS Build Tools, node-gyp rebuild fails. better-sqlite3 12.x has Node 24 prebuilts.
+- 2026-04-18 | Phase 1 Plan 01-03 | ioredis: `import { Redis, type RedisOptions } from "ioredis"` (named) instead of default | Plan specified default import; verbatimModuleSyntax rejects it (TS2709) because ioredis's default export is a namespace-ish object, not a plain class type.
+- 2026-04-18 | Phase 1 Plan 01-03 | Live Redis tests gated via `describe.skipIf(!REDIS_UP)` with module-scope TCP probe | Memurai not installed. Unit tests (constructor defaults) still run. Matt runs `Start-Service Memurai` to re-enable live suite.
 
 ## Session Continuity
 
