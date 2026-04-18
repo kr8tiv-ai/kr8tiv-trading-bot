@@ -1,0 +1,25 @@
+{
+  "name": "@kr8tiv/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@t3-oss/env-core": "^0.11",
+    "zod": "^3.23",
+    "dotenv": "^16.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.7"
+  }
+}
