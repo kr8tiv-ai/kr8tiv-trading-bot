@@ -9,7 +9,7 @@
 
 ## Phases
 
-- [>] **Phase 1: Foundation** — Scaffold + secrets + MEXC read access with two-client separation (6/6 plans complete — 01-01 scaffold+bootstrap, 01-02 config/logger/secrets, 01-03 redis-client/db, 01-04 mexc-spot+futures, 01-05 apps/core boot+smoke, 01-06 readiness docs; phase-close pending Matt's sign-off of docs/phase-1-readiness.md)
+- [x] **Phase 1: Foundation** — Scaffold + secrets + MEXC read access with two-client separation — 6/6 plans closed; readiness doc signed 2026-04-18 by Matt-Aurora-Ventures (commit `a0cdc24`); live creds-dependent verifications (pnpm smoke exit 0, MEXC_LIVE=1 suites) deferred until `pnpm setup:credentials` runs — documented in signed doc §3
 - [ ] **Phase 2: Execution Skeleton** — MEXC spot write path with safety rails ($10-aware sizing)
 - [ ] **Phase 3: Telegram Approval Loop** — grammY bot with inline Approve/Reject, 90s TTL, style-conflict card
 - [ ] **Phase 4: Style Fingerprint + Rule Signal + First Leak** — EMA/ADX rule signal, revenge-trade detector

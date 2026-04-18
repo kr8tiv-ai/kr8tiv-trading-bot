@@ -6,7 +6,7 @@ status: executing
 last_updated: "2026-04-17T00:00:00.000Z"
 progress:
   total_phases: 10
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 6
   completed_plans: 6
 ---
@@ -25,14 +25,14 @@ progress:
 
 **Core Value:** Make Matt a better trader by surfacing what he already does well and correcting what he consistently does wrong — with a bot that never fires without his approval.
 
-**Current focus:** Phase 01 — foundation
+**Current focus:** Phase 02 — Execution Skeleton (discuss phase starting)
 
 ## Current Position
 
-Phase: 01 (foundation) — ALL 6 PLANS CODE-COMPLETE, pending Matt's readiness sign-off
-Plan: 6 of 6 — Task 1 (docs) done, Task 2 (human-verify) pending
-**Status:** Plan 01-06 Task 1 closed (commit `9d1c274`). `docs/phase-1-readiness.md` + `docs/setup-windows.md` both on disk. Plan 01-06 Task 2 is a `checkpoint:human-verify` — Matt opens MEXC UI, checks key perms per checklist §1, runs `pnpm setup:credentials` + `pnpm smoke` (expected exit 0), edits `signed_by` field in the readiness doc, commits. That commit is the structural gate to Phase 2.
-**Progress:** 6/6 plans in Phase 1 code-complete. Phase 1 itself closes when the readiness doc is signed.
+Phase: 02 (Execution Skeleton) — beginning DISCUSS
+Plan: 0 of ? (pre-planning — phase has no directory yet)
+**Status:** Phase 1 CLOSED — readiness doc signed by Matt-Aurora-Ventures 2026-04-18 (commit `a0cdc24`) with explicit deferral of live creds-dependent verifications per the signed §3 caveat block. Proceeding to Phase 2 discuss to gather context on the 9 EXEC-* requirements (idempotency, server-side stops, minNotional, daily-loss circuit breaker, panic switch, ETHUSDT-only whitelist, Redis-backed position state, architectural approval-only invariant). No code changes in discuss — outputs `02-CONTEXT.md`.
+**Progress:** 6/6 Phase 1 plans closed + signed. Phase 2 discuss starting.
 
 ```
 [>] Phase 1: Foundation                                (6/6 plans code-complete; pending sign-off)
