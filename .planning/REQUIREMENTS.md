@@ -12,12 +12,12 @@ Weekend MVP scope. Everything required to ship "one live ETH spot trade, approve
 - [x] **FND-01**: Project scaffolded as pnpm workspaces + Turborepo monorepo on Node.js 22 LTS + TypeScript 5.5+ strict
 - [ ] **FND-02**: SQLite database initialized with WAL journaling (`journal_mode=WAL`, `synchronous=FULL`) via `better-sqlite3`
 - [ ] **FND-03**: Redis instance reachable from core process; connectivity smoke-tested on boot (ioredis)
-- [ ] **FND-04**: `SecretProvider` abstraction with Windows Credential Manager implementation via `@zowe/secrets-for-zowe-sdk`
-- [ ] **FND-05**: MEXC spot API key + secret + Telegram bot token stored in Windows Credential Manager and loaded through `SecretProvider` (no plaintext `.env`, no hardcoded strings)
+- [x] **FND-04**: `SecretProvider` abstraction with Windows Credential Manager implementation via `@zowe/secrets-for-zowe-sdk` — satisfied by Plan 01-02 (commit `6b5af57`), 6 round-trip tests green against real WinCred
+- [x] **FND-05**: MEXC spot API key + secret + Telegram bot token stored in Windows Credential Manager and loaded through `SecretProvider` (no plaintext `.env`, no hardcoded strings) — satisfied by Plan 01-02 (commit `a94e3bd`), `pnpm setup:credentials` + `pnpm verify-env` scripts wired end-to-end
 - [ ] **FND-06**: `MEXCSpotClient` class (read-only methods wired first) using CCXT 4.5.48+, with base URL `api.mexc.com` exposed as config, not hardcoded
 - [ ] **FND-07**: `MEXCFuturesClient` class stub (read-only methods only in v1) using CCXT, separate auth + rate bucket from spot client, base URL `contract.mexc.com` config-driven
 - [ ] **FND-08**: Boot-time smoke test pings both MEXC endpoints (spot ping + futures ping) and fails fast with a clear error if either is unreachable
-- [ ] **FND-09**: Structured logging via `pino` with automatic redaction of secret patterns (API keys, Telegram tokens, wallet addresses)
+- [x] **FND-09**: Structured logging via `pino` with automatic redaction of secret patterns (API keys, Telegram tokens, wallet addresses) — satisfied by Plan 01-02 (commit `cc1a55f`), 12 redaction tests green covering depth 1–3, Telegram/wallet scaffolds in place for Phase 3/7
 - [x] **FND-10**: `gitleaks` pre-commit hook installed and passing; no secrets ever reach git
 - [ ] **FND-11**: MEXC API key is provisioned trading-only (no withdrawals) and IP-whitelisted to the local Windows machine
 

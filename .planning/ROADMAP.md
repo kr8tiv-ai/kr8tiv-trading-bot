@@ -9,7 +9,7 @@
 
 ## Phases
 
-- [>] **Phase 1: Foundation** — Scaffold + secrets + MEXC read access with two-client separation (1/6 plans complete — 01-01 scaffold authored; bootstrap pending)
+- [>] **Phase 1: Foundation** — Scaffold + secrets + MEXC read access with two-client separation (2/6 plans complete — 01-01 scaffolded + bootstrapped, 01-02 config/logger/secrets + credentials scripts landed)
 - [ ] **Phase 2: Execution Skeleton** — MEXC spot write path with safety rails ($10-aware sizing)
 - [ ] **Phase 3: Telegram Approval Loop** — grammY bot with inline Approve/Reject, 90s TTL, style-conflict card
 - [ ] **Phase 4: Style Fingerprint + Rule Signal + First Leak** — EMA/ADX rule signal, revenge-trade detector
@@ -34,7 +34,7 @@
   5. The MEXC API key in use is confirmed trading-only (no withdrawal permission) and IP-whitelisted to Matt's Windows machine when inspected in the MEXC web UI.
 **Plans**: 6 plans
 - [x] 01-01-PLAN.md — Monorepo scaffold + tooling (pnpm+Turborepo, TS strict, Biome, lefthook+gitleaks); scaffold shared-types + shared-schemas packages (FND-01, FND-10) — SUMMARY written 2026-04-17, bootstrap pending
-- [ ] 01-02-PLAN.md — @kr8tiv/config + @kr8tiv/secrets (SecretProvider with WindowsCredentialManagerProvider via Zowe) + @kr8tiv/logger (pino redaction) + setup-credentials/verify-env scripts (FND-04, FND-05, FND-09)
+- [x] 01-02-PLAN.md — @kr8tiv/config + @kr8tiv/secrets (SecretProvider with WindowsCredentialManagerProvider via Zowe) + @kr8tiv/logger (pino redaction) + setup-credentials/verify-env scripts (FND-04, FND-05, FND-09) — SUMMARY 2026-04-18, 3 atomic commits cc1a55f / 6b5af57 / a94e3bd
 - [ ] 01-03-PLAN.md — @kr8tiv/redis-client (ioredis factory + ping helper) + @kr8tiv/db (better-sqlite3 WAL + synchronous=FULL + foreign_keys=ON) (FND-02, FND-03)
 - [ ] 01-04-PLAN.md — @kr8tiv/mexc-spot + @kr8tiv/mexc-futures (two separate CCXT instances, read-only Phase 1 scope, config-driven base URLs, Zod-validated responses) (FND-06, FND-07)
 - [ ] 01-05-PLAN.md — apps/core boot.ts + smoke.ts + dev.ts; 10-step ordered boot sequence with Promise.allSettled dual-MEXC ping; `pnpm smoke` end-to-end (FND-08)
