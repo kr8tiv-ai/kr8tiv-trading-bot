@@ -93,6 +93,31 @@ importers:
         specifier: ^2.1
         version: 2.1.9(@types/node@22.19.17)
 
+  packages/mexc-spot:
+    dependencies:
+      '@kr8tiv/config':
+        specifier: workspace:*
+        version: link:../config
+      '@kr8tiv/secrets':
+        specifier: workspace:*
+        version: link:../secrets
+      '@kr8tiv/shared-schemas':
+        specifier: workspace:*
+        version: link:../shared-schemas
+      '@kr8tiv/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+      ccxt:
+        specifier: ^4.5
+        version: 4.5.49
+    devDependencies:
+      typescript:
+        specifier: ^5.7
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/redis-client:
     dependencies:
       '@kr8tiv/config':
@@ -861,6 +886,10 @@ packages:
     resolution: {integrity: sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ==}
     engines: {node: '>=8'}
 
+  ccxt@4.5.49:
+    resolution: {integrity: sha512-fCMslegjMOahepGnhu/byVQ4Af6nVIY8jGKQniSwWstYmO9o62nrUTs1Wx0Yhb9CX1iF4fm6W5pqGrJqRHcKRw==}
+    engines: {node: '>=15.0.0'}
+
   chai@5.3.3:
     resolution: {integrity: sha512-4zNhdJD/iOjSH0A05ea+Ke6MU5mmpQcbQsSOkgdaUMJ9zTlDTD/GYlwohmIE2u0gaxHYiVHEn1Fw9mZ/ktJWgw==}
     engines: {node: '>=18'}
@@ -1626,6 +1655,18 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
+  ws@8.20.0:
+    resolution: {integrity: sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
@@ -2101,6 +2142,13 @@ snapshots:
       load-tsconfig: 0.2.5
 
   cac@6.7.14: {}
+
+  ccxt@4.5.49:
+    dependencies:
+      ws: 8.20.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   chai@5.3.3:
     dependencies:
@@ -2902,5 +2950,7 @@ snapshots:
       strip-ansi: 7.2.0
 
   wrappy@1.0.2: {}
+
+  ws@8.20.0: {}
 
   zod@3.25.76: {}
