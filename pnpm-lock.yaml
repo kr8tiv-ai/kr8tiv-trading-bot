@@ -74,6 +74,22 @@ importers:
         specifier: ^2.1
         version: 2.1.9(@types/node@22.19.17)
 
+  packages/secrets:
+    dependencies:
+      '@kr8tiv/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+      '@zowe/secrets-for-zowe-sdk':
+        specifier: ^8.29
+        version: 8.29.4
+    devDependencies:
+      typescript:
+        specifier: ^5.7
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/shared-schemas:
     dependencies:
       zod:
@@ -698,6 +714,10 @@ packages:
 
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
+
+  '@zowe/secrets-for-zowe-sdk@8.29.4':
+    resolution: {integrity: sha512-fiRfuEuFNapwhVbN3LJIA2ZgVajNB+QNFN7O7ES/fIYGM612PKcXuvbZUJSlU69IZ8eUF8SP+9OnveK4s+GLgw==}
+    engines: {node: '>=14'}
 
   abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
@@ -1815,6 +1835,8 @@ snapshots:
       '@vitest/pretty-format': 2.1.9
       loupe: 3.2.1
       tinyrainbow: 1.2.0
+
+  '@zowe/secrets-for-zowe-sdk@8.29.4': {}
 
   abort-controller@3.0.0:
     dependencies:

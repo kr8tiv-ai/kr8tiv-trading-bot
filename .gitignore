@@ -3,7 +3,7 @@
 .env.*
 !.env.example
 *.env.local
-secrets/
+/secrets/
 .secrets/
 *.key
 *.pem
@@ -13,6 +13,11 @@ secrets/
 credentials.json
 keys.json
 **/secrets.*
+
+# Allow the @kr8tiv/secrets source package (contains NO secrets; it's the
+# SecretProvider abstraction over Windows Credential Manager).
+!packages/secrets/
+!packages/secrets/**
 
 # GitHub Personal Access Tokens (belt & braces — pre-commit hook + patterns)
 # Tokens live in Windows Credential Manager (target: kr8tiv-mexc-bot/github-pat), never in files.
