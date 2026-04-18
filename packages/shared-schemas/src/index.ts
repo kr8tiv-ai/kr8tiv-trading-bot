@@ -1,10 +1,8 @@
 /**
  * Shared Zod runtime schemas for kr8tiv-mexc-bot.
  *
- * Phase 1 plan 01-01 creates this empty barrel. Downstream plans add:
- * - plan 01-02: SecretName validator (redundant with shared-types but available at runtime)
- * - plan 01-04: MEXC spot + futures response schemas (ping, balance, etc.)
- *
- * Do NOT add any schemas here in plan 01-01. This is a scaffold file only.
+ * Plan 01-04 populates the MEXC surface. Further schemas per phase:
+ * - Plan 02-xx: order-placement request/response schemas
+ * - Plan 04-xx: trade history + style fingerprint schemas
  */
-export {};
+export * from "./mexc.js";

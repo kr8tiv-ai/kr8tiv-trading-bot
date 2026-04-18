@@ -134,6 +134,9 @@ importers:
       typescript:
         specifier: ^5.7
         version: 5.9.3
+      vitest:
+        specifier: ^2.1
+        version: 2.1.9(@types/node@22.19.17)
 
   packages/shared-types:
     devDependencies:
