@@ -67,7 +67,7 @@ Weekend MVP scope. Everything required to ship "one live ETH spot trade, approve
 
 ## v2 Requirements
 
-Post-weekend iteration. Tracked but not in current roadmap coverage.
+Post-weekend iteration. Mapped to Phases 6-10 of the roadmap.
 
 ### Futures + Full Leak Suite (FUT)
 
@@ -139,59 +139,98 @@ Explicitly excluded. Anti-features from PROJECT.md + research belong here with w
 
 ## Traceability
 
-Empty until roadmap generation populates phase mappings.
+Populated by roadmap generation 2026-04-18. Every v1 and v2 requirement mapped to exactly one phase.
+
+### v1 Requirements (Phases 1-5, weekend MVP)
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FND-01 | — | Pending |
-| FND-02 | — | Pending |
-| FND-03 | — | Pending |
-| FND-04 | — | Pending |
-| FND-05 | — | Pending |
-| FND-06 | — | Pending |
-| FND-07 | — | Pending |
-| FND-08 | — | Pending |
-| FND-09 | — | Pending |
-| FND-10 | — | Pending |
-| FND-11 | — | Pending |
-| EXEC-01 | — | Pending |
-| EXEC-02 | — | Pending |
-| EXEC-03 | — | Pending |
-| EXEC-04 | — | Pending |
-| EXEC-05 | — | Pending |
-| EXEC-06 | — | Pending |
-| EXEC-07 | — | Pending |
-| EXEC-08 | — | Pending |
-| EXEC-09 | — | Pending |
-| APP-01 | — | Pending |
-| APP-02 | — | Pending |
-| APP-03 | — | Pending |
-| APP-04 | — | Pending |
-| APP-05 | — | Pending |
-| APP-06 | — | Pending |
-| APP-07 | — | Pending |
-| APP-08 | — | Pending |
-| APP-09 | — | Pending |
-| APP-10 | — | Pending |
-| SIG-01 | — | Pending |
-| SIG-02 | — | Pending |
-| SIG-03 | — | Pending |
-| SIG-04 | — | Pending |
-| SIG-05 | — | Pending |
-| SIG-06 | — | Pending |
-| SIG-07 | — | Pending |
-| SIG-08 | — | Pending |
-| LEDG-01 | — | Pending |
-| LEDG-02 | — | Pending |
-| LEDG-03 | — | Pending |
-| LEDG-04 | — | Pending |
-| LEDG-05 | — | Pending |
+| FND-01 | Phase 1 | Pending |
+| FND-02 | Phase 1 | Pending |
+| FND-03 | Phase 1 | Pending |
+| FND-04 | Phase 1 | Pending |
+| FND-05 | Phase 1 | Pending |
+| FND-06 | Phase 1 | Pending |
+| FND-07 | Phase 1 | Pending |
+| FND-08 | Phase 1 | Pending |
+| FND-09 | Phase 1 | Pending |
+| FND-10 | Phase 1 | Pending |
+| FND-11 | Phase 1 | Pending |
+| EXEC-01 | Phase 2 | Pending |
+| EXEC-02 | Phase 2 | Pending |
+| EXEC-03 | Phase 2 | Pending |
+| EXEC-04 | Phase 2 | Pending |
+| EXEC-05 | Phase 2 | Pending |
+| EXEC-06 | Phase 2 | Pending |
+| EXEC-07 | Phase 2 | Pending |
+| EXEC-08 | Phase 2 | Pending |
+| EXEC-09 | Phase 2 | Pending |
+| APP-01 | Phase 3 | Pending |
+| APP-02 | Phase 3 | Pending |
+| APP-03 | Phase 3 | Pending |
+| APP-04 | Phase 3 | Pending |
+| APP-05 | Phase 3 | Pending |
+| APP-06 | Phase 3 | Pending |
+| APP-07 | Phase 3 | Pending |
+| APP-08 | Phase 3 | Pending |
+| APP-09 | Phase 3 | Pending |
+| APP-10 | Phase 3 | Pending |
+| SIG-01 | Phase 4 | Pending |
+| SIG-02 | Phase 4 | Pending |
+| SIG-03 | Phase 4 | Pending |
+| SIG-04 | Phase 4 | Pending |
+| SIG-05 | Phase 4 | Pending |
+| SIG-06 | Phase 4 | Pending |
+| SIG-07 | Phase 4 | Pending |
+| SIG-08 | Phase 4 | Pending |
+| LEDG-01 | Phase 5 | Pending |
+| LEDG-02 | Phase 5 | Pending |
+| LEDG-03 | Phase 5 | Pending |
+| LEDG-04 | Phase 5 | Pending |
+| LEDG-05 | Phase 5 | Pending |
+
+### v2 Requirements (Phases 6-10, post-weekend iteration)
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| FUT-01 | Phase 6 | Pending |
+| FUT-02 | Phase 6 | Pending |
+| FUT-03 | Phase 6 | Pending |
+| FUT-04 | Phase 6 | Pending |
+| FUT-05 | Phase 6 | Pending |
+| FUT-06 | Phase 6 | Pending |
+| FUT-07 | Phase 6 | Pending |
+| NEWS-01 | Phase 7 | Pending |
+| NEWS-02 | Phase 7 | Pending |
+| NEWS-03 | Phase 7 | Pending |
+| NEWS-04 | Phase 7 | Pending |
+| NEWS-05 | Phase 7 | Pending |
+| NEWS-06 | Phase 7 | Pending |
+| NEWS-07 | Phase 7 | Pending |
+| NEWS-08 | Phase 7 | Pending |
+| NEWS-09 | Phase 7 | Pending |
+| ML-01 | Phase 8 | Pending |
+| ML-02 | Phase 8 | Pending |
+| ML-03 | Phase 8 | Pending |
+| ML-04 | Phase 8 | Pending |
+| ML-05 | Phase 8 | Pending |
+| ML-06 | Phase 8 | Pending |
+| ML-07 | Phase 8 | Pending |
+| UI-01 | Phase 9 | Pending |
+| UI-02 | Phase 9 | Pending |
+| UI-03 | Phase 9 | Pending |
+| VPS-01 | Phase 10 | Pending |
+| VPS-02 | Phase 10 | Pending |
+| VPS-03 | Phase 10 | Pending |
+| VPS-04 | Phase 10 | Pending |
+| VPS-05 | Phase 10 | Pending |
+| VPS-06 | Phase 10 | Pending |
 
 **Coverage:**
-- v1 requirements: 43 total
-- Mapped to phases: 0 (pending roadmap generation)
-- Unmapped: 43 ⚠️
+- v1 requirements: 43 total, 43 mapped (Phases 1-5) ✓
+- v2 requirements: 32 total, 32 mapped (Phases 6-10) ✓
+- Grand total: 75/75 mapped, 0 unmapped, 0 duplicated
 
 ---
 *Requirements defined: 2026-04-18*
-*Last updated: 2026-04-18 after initial definition*
+*Last updated: 2026-04-18 after roadmap generation — traceability populated*
