@@ -93,6 +93,34 @@ importers:
         specifier: ^2.1
         version: 2.1.9(@types/node@22.19.17)
 
+  packages/mexc-futures:
+    dependencies:
+      '@kr8tiv/config':
+        specifier: workspace:*
+        version: link:../config
+      '@kr8tiv/secrets':
+        specifier: workspace:*
+        version: link:../secrets
+      '@kr8tiv/shared-schemas':
+        specifier: workspace:*
+        version: link:../shared-schemas
+      '@kr8tiv/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+      ccxt:
+        specifier: ^4.5
+        version: 4.5.49
+    devDependencies:
+      '@kr8tiv/mexc-spot':
+        specifier: workspace:*
+        version: link:../mexc-spot
+      typescript:
+        specifier: ^5.7
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/mexc-spot:
     dependencies:
       '@kr8tiv/config':
