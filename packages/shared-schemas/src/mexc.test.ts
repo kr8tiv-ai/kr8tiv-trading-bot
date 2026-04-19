@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   MexcBalanceResponseSchema,
+  MexcCancelResponseSchema,
+  MexcExchangeInfoSchema,
+  MexcFillSchema,
   MexcFuturesPingSchema,
+  MexcOrderResponseSchema,
   MexcPingResponseSchema,
   MexcSpotTimeSchema,
 } from "./mexc.js";
@@ -62,5 +66,148 @@ describe("MexcBalanceResponseSchema", () => {
   });
   it("rejects when total/free/used are missing", () => {
     expect(() => MexcBalanceResponseSchema.parse({ info: {} })).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2 — order / cancel / fill / exchangeInfo schemas
+// ---------------------------------------------------------------------------
+
+describe("MexcOrderResponseSchema (Phase 2)", () => {
+  it("parses a CCXT unified market-buy fill", () => {
+    const raw = {
+      id: "12345",
+      clientOrderId: "abc123def456",
+      symbol: "ETH/USDT",
+      side: "buy" as const,
+      type: "market",
+      status: "closed",
+      amount: 0.001,
+      filled: 0.001,
+      cost: 3.5,
+      price: 3500,
+      fee: { cost: 0.0035, currency: "USDT" },
+      info: { origClientOrderId: "abc123def456", executedQty: "0.001" },
+      timestamp: 1700000000000,
+    };
+    const parsed = MexcOrderResponseSchema.parse(raw);
+    expect(parsed.clientOrderId).toBe("abc123def456");
+    expect(parsed.filled).toBe(0.001);
+  });
+
+  it("tolerates MEXC raw response in info (passthrough)", () => {
+    const raw = {
+      symbol: "ETH/USDT",
+      side: "sell" as const,
+      type: "MARKET",
+      info: {
+        symbol: "ETHUSDT",
+        orderId: "999",
+        origClientOrderId: "cafe001",
+        executedQty: "0.001",
+        cummulativeQuoteQty: "3.5",
+        status: "FILLED",
+      },
+    };
+    expect(() => MexcOrderResponseSchema.parse(raw)).not.toThrow();
+  });
+
+  it("requires symbol, side, and type", () => {
+    expect(() =>
+      MexcOrderResponseSchema.parse({ symbol: "ETH/USDT", side: "buy" }),
+    ).toThrow();
+  });
+});
+
+describe("MexcCancelResponseSchema", () => {
+  it("lower-cases a CANCELED status", () => {
+    const parsed = MexcCancelResponseSchema.parse({
+      symbol: "ETH/USDT",
+      origClientOrderId: "abc",
+      status: "CANCELED",
+      info: {},
+    });
+    expect(parsed.status).toBe("canceled");
+  });
+
+  it("preserves an already-lowercase status", () => {
+    const parsed = MexcCancelResponseSchema.parse({
+      symbol: "ETH/USDT",
+      status: "canceled",
+      info: {},
+    });
+    expect(parsed.status).toBe("canceled");
+  });
+});
+
+describe("MexcFillSchema", () => {
+  it("parses a fill with a fee breakdown", () => {
+    const parsed = MexcFillSchema.parse({
+      id: "trade123",
+      order: "order456",
+      symbol: "ETH/USDT",
+      side: "buy",
+      amount: 0.001,
+      price: 3500,
+      cost: 3.5,
+      fee: { cost: 0.0035, currency: "USDT" },
+      timestamp: 1700000000000,
+    });
+    expect(parsed.amount).toBe(0.001);
+    expect(parsed.fee.currency).toBe("USDT");
+  });
+
+  it("rejects a non-positive amount", () => {
+    expect(() =>
+      MexcFillSchema.parse({
+        symbol: "ETH/USDT",
+        side: "buy",
+        amount: 0,
+        price: 3500,
+        cost: 0,
+        fee: { cost: 0, currency: "USDT" },
+      }),
+    ).toThrow();
+  });
+});
+
+describe("MexcExchangeInfoSchema", () => {
+  it("parses ETHUSDT market.info with quoteAmountPrecisionMarket", () => {
+    const parsed = MexcExchangeInfoSchema.parse({
+      symbol: "ETHUSDT",
+      status: "ENABLED",
+      baseAsset: "ETH",
+      quoteAsset: "USDT",
+      baseAssetPrecision: 6,
+      quotePrecision: 6,
+      quoteAmountPrecision: "0.5",
+      quoteAmountPrecisionMarket: "5",
+      baseSizePrecision: "0.00001",
+      takerCommission: "0.002",
+      makerCommission: "0.001",
+    });
+    expect(parsed.quoteAmountPrecisionMarket).toBe("5");
+  });
+
+  it("accepts missing takerCommission (CCXT market.info may omit it)", () => {
+    expect(() =>
+      MexcExchangeInfoSchema.parse({
+        symbol: "ETHUSDT",
+        status: "ENABLED",
+        baseAsset: "ETH",
+        quoteAsset: "USDT",
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts numeric takerCommission as well as string", () => {
+    const parsed = MexcExchangeInfoSchema.parse({
+      symbol: "ETHUSDT",
+      status: "ENABLED",
+      baseAsset: "ETH",
+      quoteAsset: "USDT",
+      takerCommission: 0.002,
+    });
+    expect(parsed.takerCommission).toBe(0.002);
   });
 });

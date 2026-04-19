@@ -60,3 +60,101 @@ export const MexcBalanceResponseSchema = z.object({
   used: z.record(z.string(), z.number()),
 });
 export type AccountInfo = z.infer<typeof MexcBalanceResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Phase 2 additions — order / cancel / fill / exchangeInfo response shapes.
+// Consumed by @kr8tiv/mexc-spot write methods (Plan 02-02) and @kr8tiv/executor
+// risk-manager + fee-cache (Plan 02-03). "Zod at the response boundary" — every
+// MEXC write-path response parses through one of these before reaching
+// downstream code.
+// ---------------------------------------------------------------------------
+
+/**
+ * CCXT unified `createOrder` / `fetchOrder` / `fetchOpenOrders` response.
+ * MEXC's raw fields live in `info`. We capture the unified fields we actually
+ * read downstream, and allow `info` to be passed through opaque (z.unknown).
+ *
+ * Docs: https://docs.ccxt.com/#/README?id=order-structure
+ * MEXC raw docs: https://www.mexc.com/api-docs/spot-v3/spot-account-trade
+ */
+export const MexcOrderResponseSchema = z.object({
+  id: z.string().min(1).optional(), // CCXT unified orderId
+  clientOrderId: z.string().min(1).optional(), // CCXT unified — may be null if exchange didn't echo
+  symbol: z.string().min(1), // e.g. 'ETH/USDT'
+  side: z.enum(["buy", "sell"]),
+  type: z.string().min(1), // e.g. 'market', 'limit' — looser than enum for future exp.
+  status: z.string().min(1).optional(), // e.g. 'open', 'closed', 'canceled', 'filled' (CCXT) or 'FILLED'/'NEW' (MEXC raw)
+  amount: z.number().nonnegative().optional(), // base-asset requested qty
+  filled: z.number().nonnegative().optional(), // base-asset executed qty
+  cost: z.number().nonnegative().optional(), // quote-asset notional cost
+  price: z.number().positive().optional(), // avg fill price
+  fee: z
+    .object({ cost: z.number().nonnegative(), currency: z.string().min(1) })
+    .optional(),
+  info: z.unknown(), // raw MEXC response (origClientOrderId, executedQty, cummulativeQuoteQty, etc.)
+  timestamp: z.number().int().nonnegative().optional(),
+});
+export type OrderResult = z.infer<typeof MexcOrderResponseSchema>;
+
+/**
+ * CCXT cancel-order response (both unified and raw MEXC). Status is normalized
+ * to lowercase at parse time so downstream code can compare against 'canceled'.
+ */
+export const MexcCancelResponseSchema = z.object({
+  id: z.string().min(1).optional(),
+  clientOrderId: z.string().min(1).optional(),
+  origClientOrderId: z.string().min(1).optional(), // MEXC raw field — what we match by
+  symbol: z.string().min(1),
+  status: z
+    .string()
+    .min(1)
+    .transform((s) => s.toLowerCase()) // 'CANCELED' -> 'canceled'
+    .optional(),
+  info: z.unknown(),
+});
+export type CancelResult = z.infer<typeof MexcCancelResponseSchema>;
+
+/**
+ * Fill (trade) returned by MEXC after order execution. CCXT unified shape.
+ * The `fills` table in SQLite (schema.sql) mirrors this schema.
+ */
+export const MexcFillSchema = z.object({
+  id: z.string().min(1).optional(),
+  order: z.string().min(1).optional(), // references the parent order's id
+  symbol: z.string().min(1),
+  side: z.enum(["buy", "sell"]),
+  amount: z.number().positive(),
+  price: z.number().positive(),
+  cost: z.number().nonnegative(),
+  fee: z.object({ cost: z.number().nonnegative(), currency: z.string().min(1) }),
+  timestamp: z.number().int().nonnegative().optional(),
+  info: z.unknown().optional(),
+});
+export type FillResult = z.infer<typeof MexcFillSchema>;
+
+/**
+ * Subset of MEXC's exchangeInfo.symbols[] entry — the fields the risk manager
+ * + fee cache consume. Accepts CCXT's `market.info` passthrough.
+ * `quoteAmountPrecisionMarket` is the ONLY source of truth for market-order
+ * minNotional per 02-RESEARCH.md Pattern 2.
+ *
+ * Docs: https://www.mexc.com/api-docs/spot-v3/market-data-endpoints
+ */
+export const MexcExchangeInfoSchema = z.object({
+  symbol: z.string().min(1),
+  status: z.string().min(1),
+  baseAsset: z.string().min(1),
+  quoteAsset: z.string().min(1),
+  baseAssetPrecision: z.number().int().nonnegative().optional(),
+  quotePrecision: z.number().int().nonnegative().optional(),
+  // Precision fields — MEXC returns these as strings; keep as strings to avoid
+  // float drift.
+  quoteAmountPrecision: z.string().min(1).optional(), // min notional for LIMIT orders
+  quoteAmountPrecisionMarket: z.string().min(1).optional(), // min notional for MARKET orders (D-06 relies on this)
+  baseSizePrecision: z.string().min(1).optional(),
+  // Commission rates — nullable because CCXT's market.info doesn't always
+  // surface these; fee-cache falls back to a per-exchange call when null.
+  takerCommission: z.union([z.string(), z.number()]).nullable().optional(),
+  makerCommission: z.union([z.string(), z.number()]).nullable().optional(),
+});
+export type ExchangeInfo = z.infer<typeof MexcExchangeInfoSchema>;
