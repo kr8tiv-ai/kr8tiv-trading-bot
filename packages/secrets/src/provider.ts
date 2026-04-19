@@ -2,6 +2,7 @@ import { keyring } from "@zowe/secrets-for-zowe-sdk";
 import type { Secret, SecretName } from "@kr8tiv/shared-types";
 import { wrap } from "./secret.js";
 import { SecretNotFoundError } from "./errors.js";
+import { winCredReadBareTarget } from "./win32-fallback.js";
 
 const DEFAULT_SERVICE_PREFIX = "kr8tiv-mexc-bot";
 
@@ -45,17 +46,40 @@ export class WindowsCredentialManagerProvider implements SecretProvider {
     return USER_NAMES[name];
   }
 
+  /**
+   * Two-format lookup order:
+   *   1. Zowe's format — TargetName = `${service}/${account}` (what `pnpm setup:credentials` writes)
+   *   2. Bare-service format — TargetName = `${service}`, account in UserName (what `cmdkey /generic:target=...` and the WCM UI write)
+   *
+   * Credentials provisioned through either path resolve correctly. This is a
+   * read-only fallback — writes always go through Zowe (preserves round-trip
+   * tests from Plan 01-02).
+   */
+  private async readFromStore(name: SecretName): Promise<string | null> {
+    // Path 1: Zowe's combined format
+    const zoweValue = await keyring.getPassword(this.service(name), this.account(name));
+    if (zoweValue !== null && zoweValue !== undefined) {
+      return zoweValue;
+    }
+    // Path 2: Bare-service Win32 fallback (Windows only; returns null elsewhere)
+    const win32Value = winCredReadBareTarget(this.service(name));
+    if (win32Value !== null && win32Value.length > 0) {
+      return win32Value;
+    }
+    return null;
+  }
+
   async get(name: SecretName): Promise<Secret<string>> {
-    const value = await keyring.getPassword(this.service(name), this.account(name));
-    if (value === null || value === undefined) {
+    const value = await this.readFromStore(name);
+    if (value === null) {
       throw new SecretNotFoundError(name);
     }
     return wrap(value);
   }
 
   async has(name: SecretName): Promise<boolean> {
-    const value = await keyring.getPassword(this.service(name), this.account(name));
-    return value !== null && value !== undefined;
+    const value = await this.readFromStore(name);
+    return value !== null;
   }
 
   async list(): Promise<SecretName[]> {

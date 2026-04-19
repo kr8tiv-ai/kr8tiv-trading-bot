@@ -12,14 +12,18 @@ export type MexcSpotTime = z.infer<typeof MexcSpotTimeSchema>;
 
 /**
  * GET /api/v1/contract/ping (MEXC futures/contract)
- * Response: { success: boolean, code: number, data: number }
+ * Response: { success: boolean, code: number|string, data: number|string }
  * Where `data` is the server timestamp (ms).
+ *
+ * Empirical finding 2026-04-18 against live contract.mexc.com: this endpoint
+ * returns `code` and `data` as STRINGS ("0" and "1763515965654") not numbers
+ * despite docs showing them as numbers. Use z.coerce.number() to accept both.
  * Docs: https://www.mexc.com/api-docs/futures/market-endpoints
  */
 export const MexcFuturesPingSchema = z.object({
   success: z.boolean(),
-  code: z.number(),
-  data: z.number().int().positive(),
+  code: z.coerce.number(),
+  data: z.coerce.number().int().positive(),
 });
 export type MexcFuturesPing = z.infer<typeof MexcFuturesPingSchema>;
 
