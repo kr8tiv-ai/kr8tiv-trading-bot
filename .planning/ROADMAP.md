@@ -10,7 +10,7 @@
 ## Phases
 
 - [x] **Phase 1: Foundation** — Scaffold + secrets + MEXC read access with two-client separation — 6/6 plans closed; readiness doc signed 2026-04-18 by Matt-Aurora-Ventures (commit `a0cdc24`); live creds-dependent verifications (pnpm smoke exit 0, MEXC_LIVE=1 suites) deferred until `pnpm setup:credentials` runs — documented in signed doc §3
-- [ ] **Phase 2: Execution Skeleton** — MEXC spot write path with safety rails ($10-aware sizing)
+- [>] **Phase 2: Execution Skeleton** — MEXC spot write path with safety rails ($10-aware sizing) — 5/6 plans landed (02-01 types + 02-02 mexc-spot writes + 02-03 executor primitives + 02-04 CLIs + 02-05 boot + place-order CLI); 02-06 live-trade proof pending
 - [ ] **Phase 3: Telegram Approval Loop** — grammY bot with inline Approve/Reject, 90s TTL, style-conflict card
 - [ ] **Phase 4: Style Fingerprint + Rule Signal + First Leak** — EMA/ADX rule signal, revenge-trade detector
 - [ ] **Phase 5: Ledger + Reconciler + First Live Trade** — Append-only ledger, boot/wake reconciler, Core Value validator

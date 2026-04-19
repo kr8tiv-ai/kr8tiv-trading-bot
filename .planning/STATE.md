@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-19T05:50:02.245Z"
+last_updated: "2026-04-19T06:45:00.000Z"
 progress:
   total_phases: 10
   completed_phases: 1
   total_plans: 12
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # State: kr8tiv-mexc-bot
@@ -30,13 +30,13 @@ progress:
 ## Current Position
 
 Phase: 02 (execution-skeleton) — EXECUTING
-Plan: 1 of 6
+Plan: 6 of 6 (02-06 next — end-of-phase live trade proof)
 **Status:** Executing Phase 02
-**Progress:** 6/6 Phase 1 plans closed + signed. Phase 2 discuss starting.
+**Progress:** 6/6 Phase 1 + 5/6 Phase 2 plans closed. Plan 02-05 (boot extension + place-order CLI) landed 2026-04-19.
 
 ```
-[>] Phase 1: Foundation                                (6/6 plans code-complete; pending sign-off)
-[·] Phase 2: Execution Skeleton                        (0 plans)
+[x] Phase 1: Foundation                                (6/6 plans code-complete; signed)
+[>] Phase 2: Execution Skeleton                        (5/6 plans; 02-06 live-trade proof pending)
 [·] Phase 3: Telegram Approval Loop                    (0 plans)
 [·] Phase 4: Style Fingerprint + Rule Signal + Leak    (0 plans)
 [·] Phase 5: Ledger + Reconciler + First Live Trade    (0 plans)
@@ -65,6 +65,7 @@ Plan: 1 of 6
 | 01-04 | ~35 min inline | 3     | 17 created + 4 modified | shared-schemas populated with 4 Zod schemas + AccountInfo type; MEXCSpotClient (auth'd read-only) + MEXCFuturesClient (public ping stub); 20 unit tests + 3 live tests gated behind `MEXC_LIVE=1`; 3 atomic commits `e2c385c` / `84b8c17` / `ffbc15a`; ccxt imported in exactly 2 files |
 | 01-05 | ~40 min inline | 3     | 8 created | apps/core boot.ts (10-step DI orchestrator) + smoke.ts + dev.ts + boot.test.ts (8 mocked tests) + gitleaks.test.ts (gated on gitleaks binary); 9 tests green + 2 skipped; 1 commit `408eef3`; live smoke proved pre-flight fail path (exit 1 with all 3 missing secrets listed at once) |
 | 01-06 | ~15 min inline | 1 (of 2) | 2 created | docs/phase-1-readiness.md (FND-11 checklist reflecting full-perm key + portable Redis reality) + docs/setup-windows.md (no-admin install paths, troubleshooting); 1 commit `9d1c274`; Task 2 human-verify checkpoint pending Matt |
+| 02-05 | ~35 min inline | 2     | 3 created + 6 modified | apps/core/src/boot.ts extended with Steps 10-12 (stale-state refuse-to-start / executor_state schema + armed flag / dedicated consumerRedis + startExecutor); BootResult gains stopExecutor + executorArmed; BootError stage union adds "stale-state"; smoke.ts + dev.ts await stopExecutor during teardown + extend exit-code contract (0/1/2/3); apps/core/src/place-order.ts CLI emits 4-stage Redis Streams pipeline with MAXLEN ~ 1000 per Pitfall 4; 45 tests total on apps/core (21 boot + 22 place-order + 2 gitleaks); 2 atomic commits (pending orchestrator PowerShell MCP — bash fork blocker); EXEC-08 + EXEC-09 completed at boot layer |
 
 ## Accumulated Context
 
@@ -128,23 +129,27 @@ Format: `YYYY-MM-DD | phase | decision | rationale`
 - 2026-04-18 | Phase 1 Plan 01-03 | ioredis: `import { Redis, type RedisOptions } from "ioredis"` (named) instead of default | Plan specified default import; verbatimModuleSyntax rejects it (TS2709) because ioredis's default export is a namespace-ish object, not a plain class type.
 - 2026-04-18 | Phase 1 Plan 01-03 | Live Redis tests gated via `describe.skipIf(!REDIS_UP)` with module-scope TCP probe | Memurai not installed. Unit tests (constructor defaults) still run. Matt runs `Start-Service Memurai` to re-enable live suite.
 - 2026-04-18 | Phase 1 Plan 01-04 (forthcoming) | **MEXC API key = full permission** (NOT trading-only + no-withdraw + IP-whitelisted per FND-11 plan spec) | Matt's existing active trading key is full-permission; re-provisioning as trading-only is friction he's explicitly declining. **Risk accepted:** a leaked key could withdraw funds, not just trade. **Defenses still in effect:** (1) key stored in Windows Credential Manager, never on disk; (2) pino redaction prevents log leaks; (3) gitleaks blocks commit-time leaks; (4) the bot itself never calls withdraw endpoints. **FND-11 readiness doc (Plan 01-06) must reflect this reality** — checklist will record "full-permission key, withdraw-permission-ON accepted, relying on in-process defenses" instead of the stricter original checkbox. Review at Phase 10 VPS deploy if key moves off local machine.
+- 2026-04-19 | Phase 2 Plan 02-05 | Inject 5 executor-surface functions (stalePositionsExist, isArmed, applySchema, startExecutor, buildApprovalHandler) as optional BootDependencies overrides instead of importing them statically inside boot() | Matches Plan 01-05's DI convention + makes Phase 2 tests injectable without spinning up a real Redis Streams consumer loop. Production code still resolves to the real exports via `??` default; test code injects `vi.fn()` spies.
+- 2026-04-19 | Phase 2 Plan 02-05 | applySchema placed at Step 11 (after stale-state check, before startExecutor) rather than Step 6 (right after openDatabase) | Keeps Phase 2 executor DDL adjacent to executor startup in the boot log narrative; zero correctness difference (CREATE TABLE IF NOT EXISTS). Test `Step 11: calls applySchema(db) before starting the executor consumer` enforces the ordering via a callOrder array.
+- 2026-04-19 | Phase 2 Plan 02-05 | redisFactory called TWICE inside boot() (main + consumerRedis), both via the same deps.redisFactory override | Pitfall 9 defense — XREADGROUP BLOCK 5000 would queue every subsequent GET/SET behind it on a shared connection. Test `Step 12: creates a DEDICATED consumerRedis via deps.redisFactory (called twice)` enforces this via call count.
+- 2026-04-19 | Phase 2 Plan 02-05 | BootError stage='stale-state' distinct from 'pre-flight' with exit code 3 | Operator remedy differs: stale-state → `pnpm reconcile`; pre-flight → `pnpm setup:credentials`. smoke.ts + dev.ts exit-code ternary: 0/1/2/3 (ok/pre-flight/mexc/stale-state). startExecutor-throws path also maps to stale-state exit code (same remedy — inspect Redis + reconcile).
+- 2026-04-19 | Phase 2 Plan 02-05 | place-order.ts uses structural `XAddableRedis` type (only xadd method) not the full @kr8tiv/redis-client Redis type | Makes unit tests inject `{ xadd: vi.fn() }` directly — no full ioredis mock required. Production main() passes createRedis() which satisfies the structural type. Same pattern Plan 01-04 used for MEXCSpotClient.create injection.
 
 ## Session Continuity
 
-**Last session:** 2026-04-19T02:59:03.690Z
+**Last session:** 2026-04-19 (post Plan 02-05 — apps/core boot extension + place-order CLI)
 
 **Next session entry point:**
 
-1. Matt runs `pnpm setup:credentials` (interactive — prompts for `mexc-spot-access`, `mexc-spot-secret`, `mexc-whitelist-ip`) then `pnpm verify-env` to confirm Phase 1 secret layer is fully wired.
-2. Run `/gsd:execute-phase 1` to continue with Plan 01-03 — or `/gsd:execute-plan 01-03` for just the next plan. Plan 01-03 builds `@kr8tiv/redis-client` (ioredis factory + ping) and `@kr8tiv/db` (better-sqlite3 WAL) per FND-02 / FND-03.
+1. Orchestrator runs Plan 02-05 PowerShell-MCP Follow-Up Checklist (`.planning/phases/02-execution-skeleton/02-05-SUMMARY.md` §Orchestrator Follow-Up Checklist): `pnpm install` → `pnpm --filter core typecheck` → `pnpm --filter core test` → `pnpm turbo typecheck` → `pnpm turbo test` → 2 atomic commits (Task 1 + Task 2) → metadata commit.
+2. Once commits land, run `/gsd:execute-plan 02-06` for the end-of-phase live-trade proof (EXEC-02 duplicate-rejection observation + EXEC-07 panic cancel-flatten-freeze observation).
 
 **Handoff notes for next session:**
 
-- Phase 1 has 11 REQs (FND-01..11). Plan 01-01 satisfied FND-01 + FND-10. Plan 01-02 satisfied FND-04 + FND-05 + FND-09. Plan 01-03 targets FND-02 + FND-03. Plan 01-04 targets FND-06 + FND-07. Plan 01-05 targets FND-08. Plan 01-06 targets FND-11.
-- Do NOT hardcode MEXC base URLs anywhere (FND-06, FND-07) — config-driven is load-bearing for the Jan 12, 2026 futures domain migration.
-- SecretName union in `packages/shared-types/src/index.ts` is the source of truth — do not diverge.
-- **Environment gotcha:** `NODE_ENV=production` was lingering in PowerShell session this run and caused `pnpm install` to skip devDependencies. Always `Remove-Item Env:\NODE_ENV -EA 0` before pnpm install in a fresh session, or use `cmd /c` wrapper.
-- **Pino redaction ceiling:** depth-3 nested paths (`*.*.*.secret`) is the current max. If any Phase 4+ feature ingests 4+ level deep payloads, add `*.*.*.*.secret` explicitly. pino doesn't support `**`.
+- apps/core now boots the executor on a dedicated consumerRedis (Plan 02-05). Matt's boot log will show 12 steps: logger → env → SecretProvider → pre-flight → redis → sqlite → spot → futures → parallel pings → stale-state check → armed flag read → startExecutor. Any exit between Step 10-12 surfaces as BootError stage='stale-state' (exit 3).
+- `pnpm place-order --side buy --notional 5` (Plan 02-05) + `pnpm arm` (Plan 02-04) + `pnpm dev` (Plan 02-05) + `pnpm panic` (Plan 02-04) is the Plan 02-06 live-trade sequence. MEXC orders fire when `MEXC_LIVE=1` + executor running + armed.
+- Phase 2 has 9 EXEC requirements. 02-01 (types/schema) + 02-02 (MEXC write methods) + 02-03 (executor primitives) + 02-04 (CLIs) + 02-05 (boot + place-order) together complete EXEC-01, EXEC-02, EXEC-04, EXEC-05, EXEC-06, EXEC-07, EXEC-08, EXEC-09. EXEC-03 deferred to Phase 6 per D-05b (MEXC spot v3 REST has no triggerPrice). The final EXEC-02 duplicate-rejection proof lands in Plan 02-06.
+- **Environment gotcha (recurring):** `NODE_ENV=production` sometimes lingers in PowerShell sessions and causes `pnpm install` to skip devDependencies. Always `Remove-Item Env:\NODE_ENV -EA 0` before pnpm install in a fresh session.
 - **Commit hook bypass pattern:** `git -c core.hooksPath=/dev/null commit --no-verify -m "..."` — needed until bash fork exhaustion resolves. Lefthook hooks never fire for these, so manual gitleaks scans are advised before push.
 
 ---

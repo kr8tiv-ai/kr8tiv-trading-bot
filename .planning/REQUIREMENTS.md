@@ -30,8 +30,8 @@ Weekend MVP scope. Everything required to ship "one live ETH spot trade, approve
 - [ ] **EXEC-05**: Fee rate queried dynamically from MEXC per order (never hardcoded 0, never assumes a promo is still active)
 - [ ] **EXEC-06**: Pair whitelist for v1 is exactly `{ETHUSDT}` — any signal or order for another pair is rejected with an explicit reason
 - [ ] **EXEC-07**: Panic kill-switch: `/panic` command cancels all open orders, flattens all positions, and freezes the executor until manually re-armed
-- [ ] **EXEC-08**: Position-aware hot state in Redis: open positions, pending approvals, rate-limit buckets, all survive process restart
-- [ ] **EXEC-09**: Executor process subscribes only to `approvals.decided{approved:true}` stream events — no other code path can invoke order placement (architectural invariant)
+- [x] **EXEC-08**: Position-aware hot state in Redis: open positions, pending approvals, rate-limit buckets, all survive process restart — Plan 02-03 (isArmed/setArmed/recordOrder with 48h TTL + executor_state SQLite backstop) + Plan 02-04 (pnpm arm writes both layers) + Plan 02-05 (boot reads armed flag at Step 11, refuses to start on stale positions at Step 10)
+- [x] **EXEC-09**: Executor process subscribes only to `approvals.decided{approved:true}` stream events — no other code path can invoke order placement (architectural invariant) — Plan 02-03 (startExecutor XREADGROUP on STREAMS.APPROVALS_DECIDED + 0 hits on xreadgroup outside executor.ts + ignores approved=false events) + Plan 02-05 (boot Step 12 is the only place in apps/core that calls startExecutor)
 
 ### Approval (APP) — Telegram approval loop
 
@@ -163,8 +163,8 @@ Populated by roadmap generation 2026-04-18. Every v1 and v2 requirement mapped t
 | EXEC-05 | Phase 2 | Pending |
 | EXEC-06 | Phase 2 | Pending |
 | EXEC-07 | Phase 2 | Pending |
-| EXEC-08 | Phase 2 | Pending |
-| EXEC-09 | Phase 2 | Pending |
+| EXEC-08 | Phase 2 | Complete (Plans 02-03 + 02-04 + 02-05) |
+| EXEC-09 | Phase 2 | Complete (Plans 02-03 + 02-05) |
 | APP-01 | Phase 3 | Pending |
 | APP-02 | Phase 3 | Pending |
 | APP-03 | Phase 3 | Pending |
