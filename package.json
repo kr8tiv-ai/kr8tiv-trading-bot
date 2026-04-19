@@ -21,6 +21,7 @@
     "panic": "tsx scripts/panic.ts",
     "arm": "tsx scripts/arm.ts",
     "reconcile": "tsx scripts/reconcile.ts",
+    "place-order": "tsx apps/core/src/place-order.ts",
     "lefthook:install": "pnpm exec lefthook install"
   },
   "devDependencies": {
