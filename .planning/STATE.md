@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-last_updated: "2026-04-19T02:59:03.694Z"
+status: executing
+last_updated: "2026-04-19T05:50:02.245Z"
 progress:
   total_phases: 10
   completed_phases: 1
-  total_plans: 6
+  total_plans: 12
   completed_plans: 6
 ---
 
@@ -25,13 +25,13 @@ progress:
 
 **Core Value:** Make Matt a better trader by surfacing what he already does well and correcting what he consistently does wrong — with a bot that never fires without his approval.
 
-**Current focus:** Phase 02 — Execution Skeleton (discuss phase starting)
+**Current focus:** Phase 02 — execution-skeleton
 
 ## Current Position
 
-Phase: 02 (Execution Skeleton) — beginning DISCUSS
-Plan: 0 of ? (pre-planning — phase has no directory yet)
-**Status:** Phase 1 CLOSED — readiness doc signed by Matt-Aurora-Ventures 2026-04-18 (commit `a0cdc24`) with explicit deferral of live creds-dependent verifications per the signed §3 caveat block. Proceeding to Phase 2 discuss to gather context on the 9 EXEC-* requirements (idempotency, server-side stops, minNotional, daily-loss circuit breaker, panic switch, ETHUSDT-only whitelist, Redis-backed position state, architectural approval-only invariant). No code changes in discuss — outputs `02-CONTEXT.md`.
+Phase: 02 (execution-skeleton) — EXECUTING
+Plan: 1 of 6
+**Status:** Executing Phase 02
 **Progress:** 6/6 Phase 1 plans closed + signed. Phase 2 discuss starting.
 
 ```
