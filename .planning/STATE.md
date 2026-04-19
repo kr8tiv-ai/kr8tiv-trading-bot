@@ -8,7 +8,7 @@ progress:
   total_phases: 10
   completed_phases: 1
   total_plans: 12
-  completed_plans: 6
+  completed_plans: 8
 ---
 
 # State: kr8tiv-mexc-bot
