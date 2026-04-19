@@ -23,13 +23,13 @@ Weekend MVP scope. Everything required to ship "one live ETH spot trade, approve
 
 ### Execution (EXEC) — MEXC spot write path with safety rails
 
-- [ ] **EXEC-01**: Risk manager module that gates every order — checks: leverage cap (4x on ETH), daily-loss circuit breaker ($2 USD absolute), per-asset exposure cap, correlation guard. Runs synchronously before any order submission.
-- [ ] **EXEC-02**: `MEXCSpotClient` write methods (market + limit orders) require a `newClientOrderId` idempotency key; no order placement without one
-- [~] **EXEC-03 (AMENDED 2026-04-18):** Originally "every entry order automatically attaches a server-side stop-loss on MEXC (`triggerPrice` order) — no orders placed naked". **MEXC Spot v3 REST does not support server-side stop-loss orders** — only `LIMIT | LIMIT_MAKER | MARKET | IOC | FOK` (confirmed via official docs, mexcdevelop mirror, CCXT source + open issue #22104). Amended Phase 2 scope: **spot-path orders rely on CLI-driven panic-cancel + Phase 3 Telegram approval gate**. Phase 2's end-of-phase live trade proves the pattern: buy → immediate `pnpm panic` → cancel (total real-money exposure ~30 seconds). Server-side stop-loss support lands at **Phase 6 (Futures Write)** where MEXC DOES support trigger orders on USDT-M futures. Matt's decision 2026-04-18: Option A (defer). Research finding documented in `.planning/phases/02-execution-skeleton/02-RESEARCH.md`.
-- [ ] **EXEC-04**: Pre-order `minNotional` check: pulls `contract_detail` from MEXC, computes `minNotional = minVol * contractSize * markPrice`, rejects the order if `2 * minNotional > available margin`
-- [ ] **EXEC-05**: Fee rate queried dynamically from MEXC per order (never hardcoded 0, never assumes a promo is still active)
-- [ ] **EXEC-06**: Pair whitelist for v1 is exactly `{ETHUSDT}` — any signal or order for another pair is rejected with an explicit reason
-- [ ] **EXEC-07**: Panic kill-switch: `/panic` command cancels all open orders, flattens all positions, and freezes the executor until manually re-armed
+- [x] **EXEC-01**: Risk manager module that gates every order — checks: leverage cap (4x on ETH, spot=1x implicit), daily-loss circuit breaker ($2 USD absolute), per-asset exposure cap via minNotional×2 rule, correlation guard via ETHUSDT-only whitelist. Runs synchronously before any order submission. — Plan 02-03 (`packages/executor/src/risk-manager.ts` ensureOrderPossible — 5 checks in fail-closed-earliest order) + `packages/executor/src/breaker.ts` (CircuitBreaker UTC-midnight boundary) — 10 + 5 tests green; ordering invariant verified by violating all 5 simultaneously and asserting NOT_ARMED surfaces first
+- [x] **EXEC-02**: `MEXCSpotClient` write methods (market orders — limit deferred to Phase 4 per D-06) require a `newClientOrderId` idempotency key; no order placement without one — Plan 02-02 (clientOrderId is a REQUIRED typed parameter on placeMarketBuy/placeMarketSell — `@ts-expect-error` compile-time tests enforce) + Plan 02-03 (`packages/executor/src/idempotency.ts` makeClientOrderId = sha256(signalId + ':' + approvalTsMs).slice(0,32)) + Plan 02-06 (MEXC_LIVE=1 live test captures empirical duplicate-rejection signature — Matt runs the runbook at `docs/phase-2-readiness.md` to complete the proof; structural + compile-time enforcement landed, live-proof pending)
+- [~] **EXEC-03 (AMENDED 2026-04-18):** Originally "every entry order automatically attaches a server-side stop-loss on MEXC (`triggerPrice` order) — no orders placed naked". **MEXC Spot v3 REST does not support server-side stop-loss orders** — only `LIMIT | LIMIT_MAKER | MARKET | IOC | FOK` (confirmed via official docs, mexcdevelop mirror, CCXT source + open issue #22104). Amended Phase 2 scope: **spot-path orders rely on CLI-driven panic-cancel + Phase 3 Telegram approval gate**. Phase 2's end-of-phase live trade proves the pattern: buy → duplicate-reject capture → cancel+flatten cleanup (total real-money exposure ≤ 60 seconds). Server-side stop-loss support lands at **Phase 6 (Futures Write)** where MEXC DOES support trigger orders on USDT-M futures. Matt's decision 2026-04-18: Option A (defer). Structural amendment enforced by Plan 02-02 (no stopPrice/triggerPrice/stopLoss/takeProfit/tpsl parameters anywhere in `packages/mexc-spot/src/client.ts` or `packages/executor/src/` code paths — only in the JSDoc amendment block documenting the decision). Research finding documented in `.planning/phases/02-execution-skeleton/02-RESEARCH.md`.
+- [x] **EXEC-04**: Pre-order `minNotional` check: pulls `exchangeInfo` from MEXC, reads `quoteAmountPrecisionMarket`, rejects the order if `intentNotional < minNotional` OR `2 * minNotional > available balance` — Plan 02-02 (`fetchExchangeInfoForSymbol` helper) + Plan 02-03 (`packages/executor/src/risk-manager.ts` step 4 + step 5) — BELOW_MIN_NOTIONAL + INSUFFICIENT_BALANCE test cases green; live minNotional observed via Plan 02-02's MEXC_LIVE=1 exchangeInfo test
+- [x] **EXEC-05**: Fee rate queried dynamically from MEXC per order (never hardcoded 0, never assumes a promo is still active) — Plan 02-03 (`packages/executor/src/fee-cache.ts` — 5-min TTL cache sourced from exchangeInfo.takerCommission; explicit null-rejection throws rather than silently using 0 fee per Pitfall 12) — 5 tests green (fetch, cache, reset, null-rejection, TTL expiration)
+- [x] **EXEC-06**: Pair whitelist for v1 is exactly `{ETHUSDT}` — any signal or order for another pair is rejected with an explicit reason — Plan 02-02 (`packages/mexc-spot/src/symbol.ts` toCcxtSymbol + ALLOWED_MEXC_SYMBOLS = ["ETHUSDT"]; every write method routes through toCcxtSymbol() as first statement — throws "pair not whitelisted: X" synchronously pre-network) + Plan 02-03 (`packages/executor/src/risk-manager.ts` step 2 PAIR_NOT_WHITELISTED check) — TypeScript + runtime double enforcement
+- [x] **EXEC-07**: Panic kill-switch: `/panic` command cancels all open orders, flattens all positions, and freezes the executor until manually re-armed — Plan 02-03 (`packages/executor/src/panic.ts` — freeze-first → cancelAllOrders → 5s settlement poll → flatten with `panic-<hex>` clientOrderId → SQLite persist; idempotent by construction — re-running on clean state returns `{frozen:true, cancelled:[], flattenedQty:0, errors:[]}`) + Plan 02-04 (`scripts/panic.ts` CLI) — 9 tests green covering freeze-first, settlement polling, flatten, idempotency, SQLite persist; live-proof via Plan 02-06 Task 2 (Matt runs `pnpm panic` twice post-trade — idempotency + frozen:true confirmed)
 - [x] **EXEC-08**: Position-aware hot state in Redis: open positions, pending approvals, rate-limit buckets, all survive process restart — Plan 02-03 (isArmed/setArmed/recordOrder with 48h TTL + executor_state SQLite backstop) + Plan 02-04 (pnpm arm writes both layers) + Plan 02-05 (boot reads armed flag at Step 11, refuses to start on stale positions at Step 10)
 - [x] **EXEC-09**: Executor process subscribes only to `approvals.decided{approved:true}` stream events — no other code path can invoke order placement (architectural invariant) — Plan 02-03 (startExecutor XREADGROUP on STREAMS.APPROVALS_DECIDED + 0 hits on xreadgroup outside executor.ts + ignores approved=false events) + Plan 02-05 (boot Step 12 is the only place in apps/core that calls startExecutor)
 
@@ -156,13 +156,13 @@ Populated by roadmap generation 2026-04-18. Every v1 and v2 requirement mapped t
 | FND-09 | Phase 1 | Pending |
 | FND-10 | Phase 1 | Complete (Plan 01-01) |
 | FND-11 | Phase 1 | Pending |
-| EXEC-01 | Phase 2 | Pending |
-| EXEC-02 | Phase 2 | Pending |
-| EXEC-03 | Phase 2 | Pending |
-| EXEC-04 | Phase 2 | Pending |
-| EXEC-05 | Phase 2 | Pending |
-| EXEC-06 | Phase 2 | Pending |
-| EXEC-07 | Phase 2 | Pending |
+| EXEC-01 | Phase 2 | Complete (Plan 02-03) |
+| EXEC-02 | Phase 2 | Structurally complete (Plans 02-02 + 02-03); empirical live-proof pending Matt via Plan 02-06 runbook at `docs/phase-2-readiness.md` |
+| EXEC-03 | Phase 2 | Amended 2026-04-18 — deferred to Phase 6 (Futures Write). MEXC Spot v3 REST does not support triggerPrice. Structural amendment landed Plan 02-02. |
+| EXEC-04 | Phase 2 | Complete (Plans 02-02 + 02-03) |
+| EXEC-05 | Phase 2 | Complete (Plan 02-03) |
+| EXEC-06 | Phase 2 | Complete (Plans 02-02 + 02-03) |
+| EXEC-07 | Phase 2 | Complete (Plans 02-03 + 02-04); live-proof via Plan 02-06 runbook Step F |
 | EXEC-08 | Phase 2 | Complete (Plans 02-03 + 02-04 + 02-05) |
 | EXEC-09 | Phase 2 | Complete (Plans 02-03 + 02-05) |
 | APP-01 | Phase 3 | Pending |
@@ -233,4 +233,4 @@ Populated by roadmap generation 2026-04-18. Every v1 and v2 requirement mapped t
 
 ---
 *Requirements defined: 2026-04-18*
-*Last updated: 2026-04-17 after Plan 01-01 execution — FND-01, FND-10 marked complete*
+*Last updated: 2026-04-19 after Plan 02-06 execution — EXEC-01, EXEC-02 (structural), EXEC-04, EXEC-05, EXEC-06, EXEC-07 (structural), EXEC-08, EXEC-09 marked complete. EXEC-03 remains [~] per amendment. Live-trade sign-off pending Matt via `docs/phase-2-readiness.md`.*

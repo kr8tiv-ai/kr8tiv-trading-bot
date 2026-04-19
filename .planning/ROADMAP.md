@@ -10,7 +10,7 @@
 ## Phases
 
 - [x] **Phase 1: Foundation** — Scaffold + secrets + MEXC read access with two-client separation — 6/6 plans closed; readiness doc signed 2026-04-18 by Matt-Aurora-Ventures (commit `a0cdc24`); live creds-dependent verifications (pnpm smoke exit 0, MEXC_LIVE=1 suites) deferred until `pnpm setup:credentials` runs — documented in signed doc §3
-- [>] **Phase 2: Execution Skeleton** — MEXC spot write path with safety rails ($10-aware sizing) — 5/6 plans landed (02-01 types + 02-02 mexc-spot writes + 02-03 executor primitives + 02-04 CLIs + 02-05 boot + place-order CLI); 02-06 live-trade proof pending
+- [>] **Phase 2: Execution Skeleton** — MEXC spot write path with safety rails ($10-aware sizing) — 6/6 plans authored (02-01 types + 02-02 mexc-spot writes + 02-03 executor primitives + 02-04 CLIs + 02-05 boot + place-order CLI + 02-06 live-proof test + readiness runbook + SUMMARY). Code-complete; live-trade sign-off pending Matt via `docs/phase-2-readiness.md`. EXEC-01/04/05/06/08/09 verified via tests; EXEC-02 + EXEC-07 structurally verified + empirical-proof pending Matt's physical MEXC run; EXEC-03 amended to defer to Phase 6 per D-05b.
 - [ ] **Phase 3: Telegram Approval Loop** — grammY bot with inline Approve/Reject, 90s TTL, style-conflict card
 - [ ] **Phase 4: Style Fingerprint + Rule Signal + First Leak** — EMA/ADX rule signal, revenge-trade detector
 - [ ] **Phase 5: Ledger + Reconciler + First Live Trade** — Append-only ledger, boot/wake reconciler, Core Value validator
@@ -158,12 +158,12 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 1/6 | In progress (01-01 scaffold authored; bootstrap pending for commits) | - |
-| 2. Execution Skeleton | 0/? | Not started | - |
-| 3. Telegram Approval Loop | 0/? | Not started | - |
+| 1. Foundation | 6/6 | Complete — signed by Matt-Aurora-Ventures via `docs/phase-1-readiness.md` | 2026-04-18 |
+| 2. Execution Skeleton | 6/6 | Code-complete; live-trade sign-off pending Matt via `docs/phase-2-readiness.md` (Plan 02-06 Task 2 = checkpoint:human-verify) | 2026-04-19 (code) |
+| 3. Telegram Approval Loop | 0/? | Not started — `/gsd:discuss-phase 3` is the next entry point after Phase 2 sign-off | - |
 | 4. Style Fingerprint + Rule Signal + First Leak | 0/? | Not started | - |
 | 5. Ledger + Reconciler + First Live Trade | 0/? | Not started | - |
-| 6. Futures Write + Full Leak Suite | 0/? | Not started | - |
+| 6. Futures Write + Full Leak Suite | 0/? | Not started — closes EXEC-03 amendment (re-enables triggerPrice via MEXC's USDT-M contract trigger orders) | - |
 | 7. News Veto + On-chain Ingest | 0/? | Not started | - |
 | 8. ML Signal (XGBoost/ONNX) | 0/? | Not started | - |
 | 9. Web + CLI Dashboards | 0/? | Not started | - |
@@ -197,4 +197,4 @@
 
 ---
 *Roadmap created: 2026-04-18*
-*Last updated: 2026-04-17 after Plan 01-01 execution (scaffold authored; 3 atomic commits pending Matt's bootstrap run)*
+*Last updated: 2026-04-19 after Plan 02-06 execution — Phase 2 code-complete (6/6 plans), live-trade sign-off pending Matt via `docs/phase-2-readiness.md`. EXEC-01/04/05/06/08/09 verified; EXEC-02 + EXEC-07 structurally verified + empirical pending; EXEC-03 amended to Phase 6.*
