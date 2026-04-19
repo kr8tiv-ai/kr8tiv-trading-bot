@@ -23,7 +23,8 @@
     "@kr8tiv/redis-client": "workspace:*",
     "@kr8tiv/secrets": "workspace:*",
     "@kr8tiv/shared-schemas": "workspace:*",
-    "@kr8tiv/shared-types": "workspace:*"
+    "@kr8tiv/shared-types": "workspace:*",
+    "pino": "^9.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6",

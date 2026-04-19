@@ -146,6 +146,9 @@ importers:
       '@kr8tiv/shared-types':
         specifier: workspace:*
         version: link:../shared-types
+      pino:
+        specifier: ^9.5
+        version: 9.14.0
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6
