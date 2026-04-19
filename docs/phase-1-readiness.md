@@ -103,20 +103,36 @@ Exit code: **0**
 ### Paste the last run's exit code + final log line here
 
 ```
-last_smoke_run_exit_code: 1   # pre-flight: creds not yet provisioned — expected
-last_smoke_run_last_log:  [2026-04-18 16:41:37.613 -0600] FATAL (kr8tiv-mexc-bot/39136): smoke test failed
-                          stage: "pre-flight"
-last_smoke_run_caveat:    Correctly exercised the fail-fast pre-flight path — all 3 missing secrets
-                          reported in one fatal log line, BootError.stage='pre-flight' mapped to exit 1,
-                          actionable hint printed ("Run pnpm setup:credentials"). The exit-0 happy path
-                          fires once Matt runs `pnpm setup:credentials`; re-run `pnpm smoke` at that
-                          point and amend this block with the exit-0 JSON log trail before starting
-                          Phase 2 *execute* (Phase 2 discuss is safe to run now — no orders fire).
+last_smoke_run_exit_code: 0   # full happy path — all systems ready (2026-04-18 22:15:21 -0600)
+last_smoke_run_log_trail:
+  [22:15:12.461] INFO  redis connected              { url: redis://127.0.0.1:6379 }
+  [22:15:12.476] INFO  sqlite opened (WAL, synchronous=FULL, foreign_keys=ON)
+  [22:15:19.872] INFO  MEXC spot ping OK            { serverTime: <epoch ms> }
+  [22:15:19.872] INFO  MEXC futures ping OK         { serverTime: <epoch ms> }
+  [22:15:21.794] INFO  IP whitelist matches current public IP
+  [22:15:21.794] INFO  Phase 1 boot complete - all systems ready
+  [22:15:21.794] INFO  smoke test passed
+
+last_smoke_run_notes:
+  - Credentials were initially stored in WCM via cmdkey/UI (bare-service TargetName convention
+    `kr8tiv-mexc-bot/mexc-spot-access` with account in UserName field), NOT via
+    `pnpm setup:credentials` which writes the Zowe combined format (TargetName =
+    `${service}/${account}`). Both are valid WCM encodings for the same (service, account)
+    pair but Zowe's keyring-rs only reads its own format.
+  - Fix landed 2026-04-18 as post-sign-off addendum: @kr8tiv/secrets now has a Win32 CredRead
+    fallback (packages/secrets/src/win32-fallback.ts) — on a null from Zowe's combined lookup,
+    it tries the bare-service format via a spawned PowerShell CredRead script. Writes still go
+    through Zowe. Credentials from either provisioning path resolve cleanly.
+  - Also fixed 2026-04-18: MEXC futures `/api/v1/contract/ping` returns `code` and `data` as
+    STRINGS (not numbers as docs suggest). MexcFuturesPingSchema now uses z.coerce.number()
+    to accept both.
+  - Earlier run at 16:41 correctly exercised the pre-flight fail path (exit 1, all 3 missing
+    secrets in one fatal log) — proves both branches of FND-08.
 ```
 
 - [x] `pnpm smoke` has been run on this machine
-- [x] Exit code was 0 (or the failure was expected and noted) — exit 1, expected, noted
-- [ ] The final log line showed `Phase 1 boot complete - all systems ready` (success case) — DEFERRED until creds provisioned
+- [x] Exit code was 0 — full happy path verified live
+- [x] The final log line showed `Phase 1 boot complete - all systems ready` + `smoke test passed`
 
 ---
 
