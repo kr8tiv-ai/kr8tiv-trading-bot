@@ -1,0 +1,36 @@
+{
+  "name": "@kr8tiv/executor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@kr8tiv/config": "workspace:*",
+    "@kr8tiv/db": "workspace:*",
+    "@kr8tiv/logger": "workspace:*",
+    "@kr8tiv/mexc-spot": "workspace:*",
+    "@kr8tiv/redis-client": "workspace:*",
+    "@kr8tiv/secrets": "workspace:*",
+    "@kr8tiv/shared-schemas": "workspace:*",
+    "@kr8tiv/shared-types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6",
+    "@types/node": "^22",
+    "better-sqlite3": "^12",
+    "ioredis": "^5.4",
+    "typescript": "^5.7",
+    "vitest": "^2.1"
+  }
+}
