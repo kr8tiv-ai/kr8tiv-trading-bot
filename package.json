@@ -18,6 +18,9 @@
     "setup:credentials": "tsx scripts/setup-credentials.ts",
     "verify-env": "tsx scripts/verify-env.ts",
     "preflight": "powershell -ExecutionPolicy Bypass -File scripts/preflight-windows.ps1",
+    "panic": "tsx scripts/panic.ts",
+    "arm": "tsx scripts/arm.ts",
+    "reconcile": "tsx scripts/reconcile.ts",
     "lefthook:install": "pnpm exec lefthook install"
   },
   "devDependencies": {

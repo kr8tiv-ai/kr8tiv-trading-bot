@@ -5,6 +5,11 @@
   "type": "module",
   "dependencies": {
     "@kr8tiv/config": "workspace:*",
+    "@kr8tiv/db": "workspace:*",
+    "@kr8tiv/executor": "workspace:*",
+    "@kr8tiv/logger": "workspace:*",
+    "@kr8tiv/mexc-spot": "workspace:*",
+    "@kr8tiv/redis-client": "workspace:*",
     "@kr8tiv/secrets": "workspace:*",
     "@kr8tiv/shared-types": "workspace:*"
   },
