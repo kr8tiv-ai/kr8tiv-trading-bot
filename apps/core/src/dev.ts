@@ -1,6 +1,6 @@
 // apps/core/src/dev.ts
-// Entry point for `pnpm dev`. Runs boot(), keeps handles alive,
-// awaits SIGINT/SIGTERM for clean shutdown.
+// Entry point for `pnpm dev`. Runs boot(), keeps handles alive with the
+// executor consumer loop running, awaits SIGINT/SIGTERM for clean shutdown.
 
 import { boot, BootError } from "./boot.js";
 import { logger } from "@kr8tiv/logger";
@@ -11,11 +11,20 @@ async function main(): Promise<void> {
 
   try {
     handles = await boot();
-    logger.info("dev session started - press Ctrl+C to shut down");
+    logger.info(
+      { armed: handles.executorArmed },
+      "dev session started - executor listening on approvals.decided — press Ctrl+C to shut down",
+    );
   } catch (err) {
     if (err instanceof BootError) {
       logger.fatal({ stage: err.stage, msg: err.message }, "boot failed");
-      process.exit(err.stage === "mexc" ? 2 : 1);
+      const exitCode =
+        err.stage === "mexc"
+          ? 2
+          : err.stage === "stale-state"
+            ? 3
+            : 1;
+      process.exit(exitCode);
     }
     logger.fatal({ err }, "boot failed (unexpected error)");
     process.exit(1);
@@ -24,6 +33,14 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "shutting down");
     if (handles) {
+      // Stop executor FIRST — it unblocks the XREADGROUP BLOCK 5000 loop
+      // via consumerRedis.disconnect() + awaits loop exit. Without this,
+      // SIGINT followed by redis.quit() races the consumer connection.
+      try {
+        await handles.stopExecutor();
+      } catch {
+        /* ignore */
+      }
       try {
         await handles.redis.quit();
       } catch {
@@ -45,7 +62,8 @@ async function main(): Promise<void> {
     void shutdown("SIGTERM");
   });
 
-  // Keep the process alive indefinitely — Phase 2+ supervisors replace this.
+  // Keep the process alive indefinitely — the executor consumer loop is
+  // blocked on XREADGROUP, which holds the event loop busy.
 }
 
 void main();

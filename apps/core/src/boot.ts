@@ -13,6 +13,13 @@ import { openDatabase } from "@kr8tiv/db";
 import { MEXCSpotClient } from "@kr8tiv/mexc-spot";
 import { MEXCFuturesClient } from "@kr8tiv/mexc-futures";
 import type { SecretName } from "@kr8tiv/shared-types";
+import {
+  applySchema,
+  buildApprovalHandler,
+  isArmed,
+  stalePositionsExist,
+  startExecutor,
+} from "@kr8tiv/executor";
 
 const REQUIRED_SECRETS: readonly SecretName[] = [
   "mexc-spot-access",
@@ -29,6 +36,18 @@ export interface BootResult {
   spot: MEXCSpotClient;
   futures: MEXCFuturesClient;
   secrets: SecretProvider;
+  /**
+   * Call to gracefully stop the executor consumer loop. Idempotent-safe — can
+   * be awaited multiple times (second call resolves immediately because the
+   * underlying consumerRedis is already disconnected + the loop has exited).
+   */
+  stopExecutor: () => Promise<void>;
+  /**
+   * Snapshot of executor:armed at boot time. Informational only — the executor
+   * re-reads this on every approval via ensureOrderPossible. Matt inspects
+   * this at boot to decide whether to run `pnpm arm` before `pnpm place-order`.
+   */
+  executorArmed: boolean;
 }
 
 export interface BootDependencies {
@@ -36,7 +55,10 @@ export interface BootDependencies {
   logger?: Logger;
   /** Override for tests. Default: new WindowsCredentialManagerProvider(). */
   secrets?: SecretProvider;
-  /** Override for tests. Default: createRedis(). */
+  /** Override for tests. Default: createRedis(). Called TWICE — once for the
+   * main Redis handle (Step 5) and once for the dedicated consumerRedis
+   * (Step 12, per 02-RESEARCH.md Pitfall 9 — the XREADGROUP BLOCK loop ties
+   * up a connection for the entire block window). */
   redisFactory?: () => Redis;
   /** Override for tests. Default: openDatabase(env.SQLITE_PATH). */
   dbFactory?: () => BetterSqliteDatabase;
@@ -46,22 +68,65 @@ export interface BootDependencies {
   futuresFactory?: (secrets: SecretProvider) => Promise<MEXCFuturesClient>;
   /** Override for tests. Default: live fetch to https://api.ipify.org with 2s AbortSignal.timeout. */
   fetchPublicIp?: () => Promise<string>;
+  /**
+   * Override for tests. Default: the `startExecutor` export from @kr8tiv/executor.
+   * Tests inject a fake to avoid spinning up a real Redis Streams consumer loop.
+   */
+  startExecutorFn?: typeof startExecutor;
+  /**
+   * Override for tests. Default: the `buildApprovalHandler` export from @kr8tiv/executor.
+   * Tests inject a fake to avoid constructing the real handler graph.
+   */
+  buildApprovalHandlerFn?: typeof buildApprovalHandler;
+  /**
+   * Override for tests. Default: the `applySchema` export from @kr8tiv/executor.
+   * Tests inject a no-op to avoid requiring a real SQLite DDL round-trip.
+   */
+  applySchemaFn?: typeof applySchema;
+  /**
+   * Override for tests. Default: the `isArmed` export from @kr8tiv/executor.
+   */
+  isArmedFn?: typeof isArmed;
+  /**
+   * Override for tests. Default: the `stalePositionsExist` export from @kr8tiv/executor.
+   */
+  stalePositionsExistFn?: typeof stalePositionsExist;
 }
 
 export class BootError extends Error {
   override readonly name: string = "BootError";
-  /** "pre-flight" (exit 1) or "mexc" (exit 2). */
-  readonly stage: "pre-flight" | "mexc";
-  constructor(message: string, stage: "pre-flight" | "mexc") {
+  /** "pre-flight" (exit 1), "mexc" (exit 2), or "stale-state" (exit 3). */
+  readonly stage: "pre-flight" | "mexc" | "stale-state";
+  constructor(
+    message: string,
+    stage: "pre-flight" | "mexc" | "stale-state",
+  ) {
     super(message);
     this.stage = stage;
   }
 }
 
 /**
- * Orchestrates Phase 1 boot per 01-RESEARCH.md Pattern 4.
+ * Orchestrates Phase 1 + Phase 2 boot per 01-RESEARCH.md Pattern 4 + 02-RESEARCH.md Example 6.
  *
- * Fails fast. Returns opened handles on success.
+ * Fails fast. Returns opened handles + executor lifecycle controls on success.
+ *
+ * Steps 1-9 (Phase 1): logger, env, secrets, pre-flight, Redis, SQLite, MEXC
+ * spot client, MEXC futures client, parallel connectivity ping + optional
+ * pre-warns (clock skew + IP whitelist).
+ *
+ * Steps 10-12 (Phase 2):
+ *   Step 10: Stale-state refuse-to-start (02-CONTEXT.md D-05). Calls
+ *            stalePositionsExist(redis); if true, throws BootError
+ *            stage='stale-state' and instructs the operator to run
+ *            `pnpm reconcile`.
+ *   Step 11: Apply executor SQLite schema (idempotent) + read executor:armed
+ *            flag. Logs a warning if unarmed; does NOT throw (the executor's
+ *            own risk gate will refuse orders until `pnpm arm` runs).
+ *   Step 12: Start the executor Redis Streams consumer loop on a DEDICATED
+ *            consumerRedis connection (02-RESEARCH.md Pitfall 9 — a single
+ *            shared connection would block GET/SET while XREADGROUP BLOCK
+ *            is pending). Returns stopExecutor() for graceful shutdown.
  */
 export async function boot(deps: BootDependencies = {}): Promise<BootResult> {
   // Step 1: logger — always first; every subsequent error flows through it
@@ -94,8 +159,10 @@ export async function boot(deps: BootDependencies = {}): Promise<BootResult> {
     );
   }
 
-  // Step 5: Redis
-  const redis = (deps.redisFactory ?? createRedis)();
+  // Step 5: Redis (main handle — used by state / risk-manager / ledger, NEVER
+  // for the consumer loop; Step 12 creates a second dedicated connection).
+  const redisFactory = deps.redisFactory ?? createRedis;
+  const redis = redisFactory();
   try {
     await pingOrThrow(redis);
     log.info(
@@ -219,7 +286,77 @@ export async function boot(deps: BootDependencies = {}): Promise<BootResult> {
     log.warn({ err }, "Could not verify IP whitelist (non-fatal)");
   }
 
-  log.info("Phase 1 boot complete - all systems ready");
+  // ========================================================================
+  // Phase 2 additions (Steps 10-12) — boot extension per 02-RESEARCH.md Ex 6
+  // ========================================================================
 
-  return { redis, db, spot, futures, secrets };
+  const stalePositionsExistImpl =
+    deps.stalePositionsExistFn ?? stalePositionsExist;
+  const isArmedImpl = deps.isArmedFn ?? isArmed;
+  const applySchemaImpl = deps.applySchemaFn ?? applySchema;
+  const startExecutorImpl = deps.startExecutorFn ?? startExecutor;
+  const buildApprovalHandlerImpl =
+    deps.buildApprovalHandlerFn ?? buildApprovalHandler;
+
+  // Step 10: Stale-state refuse-to-start (02-CONTEXT.md D-05).
+  // The reconciler (scripts/reconcile.ts, Plan 02-04) is the cure.
+  if (await stalePositionsExistImpl(redis)) {
+    log.fatal(
+      { pattern: "executor:positions:* or executor:orders:*" },
+      "stale state detected in Redis — run `pnpm reconcile` before starting",
+    );
+    throw new BootError(
+      "stale state detected — run `pnpm reconcile` before starting",
+      "stale-state",
+    );
+  }
+
+  // Step 11: Apply executor SQLite schema (idempotent) + read armed flag.
+  // applySchema is a CREATE TABLE IF NOT EXISTS bundle so it's safe to call
+  // on every boot even after Plan 02-01 already applied it to the DB.
+  applySchemaImpl(db);
+  const executorArmed = await isArmedImpl(redis);
+  if (!executorArmed) {
+    log.warn("executor NOT armed — run `pnpm arm` to enable order placement");
+  } else {
+    log.info("executor armed");
+  }
+
+  // Step 12: Start executor Redis Streams consumer.
+  // DEDICATED consumerRedis per 02-RESEARCH.md Pitfall 9 — the XREADGROUP BLOCK
+  // 5000 loop ties up the connection for the entire block window; sharing the
+  // main `redis` handle would queue every subsequent GET/SET behind it.
+  const consumerRedis = redisFactory();
+  const handler = buildApprovalHandlerImpl({ spot, redis, db, log });
+  let stopExecutor: () => Promise<void>;
+  try {
+    stopExecutor = await startExecutorImpl(consumerRedis, handler, log);
+  } catch (err) {
+    log.fatal(
+      { err },
+      "executor failed to start — Redis Streams unavailable?",
+    );
+    try {
+      consumerRedis.disconnect();
+    } catch {
+      /* ignore */
+    }
+    throw new BootError(
+      `executor start failed: ${String(err)}`,
+      "stale-state",
+    );
+  }
+  log.info("executor listening on approvals.decided");
+
+  log.info("Phase 2 boot complete - all systems ready");
+
+  return {
+    redis,
+    db,
+    spot,
+    futures,
+    secrets,
+    stopExecutor,
+    executorArmed,
+  };
 }

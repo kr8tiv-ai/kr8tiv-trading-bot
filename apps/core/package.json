@@ -13,6 +13,7 @@
   "dependencies": {
     "@kr8tiv/config": "workspace:*",
     "@kr8tiv/db": "workspace:*",
+    "@kr8tiv/executor": "workspace:*",
     "@kr8tiv/logger": "workspace:*",
     "@kr8tiv/mexc-futures": "workspace:*",
     "@kr8tiv/mexc-spot": "workspace:*",

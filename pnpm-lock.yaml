@@ -44,6 +44,9 @@ importers:
       '@kr8tiv/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@kr8tiv/executor':
+        specifier: workspace:*
+        version: link:../../packages/executor
       '@kr8tiv/logger':
         specifier: workspace:*
         version: link:../../packages/logger
