@@ -120,6 +120,52 @@ importers:
         specifier: ^2.1
         version: 2.1.9(@types/node@22.19.17)
 
+  packages/executor:
+    dependencies:
+      '@kr8tiv/config':
+        specifier: workspace:*
+        version: link:../config
+      '@kr8tiv/db':
+        specifier: workspace:*
+        version: link:../db
+      '@kr8tiv/logger':
+        specifier: workspace:*
+        version: link:../logger
+      '@kr8tiv/mexc-spot':
+        specifier: workspace:*
+        version: link:../mexc-spot
+      '@kr8tiv/redis-client':
+        specifier: workspace:*
+        version: link:../redis-client
+      '@kr8tiv/secrets':
+        specifier: workspace:*
+        version: link:../secrets
+      '@kr8tiv/shared-schemas':
+        specifier: workspace:*
+        version: link:../shared-schemas
+      '@kr8tiv/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6
+        version: 7.6.13
+      '@types/node':
+        specifier: ^22
+        version: 22.19.17
+      better-sqlite3:
+        specifier: ^12
+        version: 12.9.0
+      ioredis:
+        specifier: ^5.4
+        version: 5.10.1
+      typescript:
+        specifier: ^5.7
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/logger:
     dependencies:
       '@kr8tiv/config':
