@@ -56,6 +56,17 @@ Phase 2 does NOT ship:
 - **`apps/core/src/reconcile.ts` is a new Phase 2 CLI** that: (1) queries MEXC truth via `fetchOpenOrders` + position query, (2) overwrites Redis state with MEXC's view, (3) writes `reconciled_at` timestamp. Phase 5 replaces this CLI with an automated boot-time reconciler and adds crash-recovery edge cases; Phase 2 ships the minimal happy-path version.
 - **Why not auto-sync on every boot:** MEXC query can fail or return partial data. Explicit manual step forces Matt to confirm state is clean before resuming trading.
 
+### D-05b. EXEC-03 server-side stops — DEFERRED to Phase 6 (AMENDED 2026-04-18 post-research)
+- **Research finding:** MEXC Spot v3 REST API does not support server-side stop-loss orders (`POST /api/v3/order` only accepts `LIMIT | LIMIT_MAKER | MARKET | IOC | FOK`). Confirmed via 3 independent sources; CCXT silently drops `triggerPrice` param for MEXC spot (see ccxt issue #22104).
+- **Matt's decision (2026-04-18):** Option A — defer server-side stops to Phase 6 (futures, where MEXC does support trigger orders). Phase 2 spot path ships WITHOUT any stop attached.
+- **Phase 2 safety substitute:** CLI-driven panic-cancel from D-02. End-of-phase live trade (D-04) proves the pattern: `pnpm place-order` buy → attach NO stop → immediate `pnpm panic` cancels within ~30 seconds. Real-money exposure window is bounded by panic-cancel latency, not by an exchange-side stop.
+- **Implications for planner:**
+  - `MEXCSpotClient.placeMarketBuy(...)` signature does NOT take a `stopPrice` param.
+  - Risk manager does NOT enforce "every entry has a stop" for spot orders in Phase 2 (EXEC-03 check skipped for spot).
+  - `02-SUMMARY.md` acceptance criteria MUST explicitly note "spot orders placed naked per EXEC-03 amendment 2026-04-18" so future readers don't assume it was an oversight.
+  - Phase 6 planning re-enables the "every entry has a stop" rule for USDT-M futures where MEXC supports it.
+- **REQUIREMENTS.md status:** EXEC-03 amended to `[~]` with full rationale, committed alongside this CONTEXT edit.
+
 ### D-06. Order types — market-only in Phase 2
 - **`placeMarketBuy` + `placeMarketSell` only.** No limit orders in Phase 2 (no time-in-force, no filled-partial state machine).
 - **Phase 4 adds limit orders** when the ML/rule signal generator produces suggested entry prices that require non-market placement.
