@@ -11,9 +11,9 @@ const REQUIRED: readonly SecretName[] = [
   "mexc-spot-access",
   "mexc-spot-secret",
   "mexc-whitelist-ip",
-  // Phase 3 will add: "telegram-bot-token"
   // Phase 6 will add: "mexc-futures-access", "mexc-futures-secret"
 ];
+const OPTIONAL_FUTURE: readonly SecretName[] = ["telegram-bot-token"];
 
 async function main(): Promise<void> {
   const rl = readline.createInterface({ input: stdin, output: stdout });
@@ -31,6 +31,21 @@ async function main(): Promise<void> {
     const value = (await rl.question(prompt)).trim();
     if (value.length === 0) {
       process.stdout.write(exists ? "  (kept)\n" : "  (skipped - still missing)\n");
+      continue;
+    }
+    await provider.set(name, value);
+    process.stdout.write(`  (set ${value.length} chars)\n`);
+  }
+
+  process.stdout.write("\nOptional future secrets (safe to skip for now)\n");
+  for (const name of OPTIONAL_FUTURE) {
+    const exists = await provider.has(name);
+    const prompt = exists
+      ? `${name}  [already set - enter to keep, paste new value to replace]: `
+      : `${name}  [optional - paste value or Enter to skip]: `;
+    const value = (await rl.question(prompt)).trim();
+    if (value.length === 0) {
+      process.stdout.write(exists ? "  (kept)\n" : "  (skipped - still optional)\n");
       continue;
     }
     await provider.set(name, value);

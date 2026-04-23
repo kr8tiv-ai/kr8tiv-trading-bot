@@ -11,9 +11,10 @@ const REQUIRED: readonly SecretName[] = [
   "mexc-spot-secret",
   "mexc-whitelist-ip",
 ];
+const OPTIONAL_FUTURE: readonly SecretName[] = ["telegram-bot-token"];
 
 async function main(): Promise<void> {
-  // Step 1 — env parse
+  // Step 1 - env parse
   process.stdout.write("=== env ===\n");
   process.stdout.write(`NODE_ENV              = ${env.NODE_ENV}\n`);
   process.stdout.write(`MEXC_SPOT_BASE_URL    = ${env.MEXC_SPOT_BASE_URL}\n`);
@@ -23,6 +24,21 @@ async function main(): Promise<void> {
   process.stdout.write(`SQLITE_PATH           = ${env.SQLITE_PATH}\n`);
   process.stdout.write(`LOG_LEVEL             = ${env.LOG_LEVEL}\n`);
   process.stdout.write(`LOG_PRETTY            = ${env.LOG_PRETTY}\n`);
+  process.stdout.write(
+    `TELEGRAM_CHAT_ID      = ${env.TELEGRAM_CHAT_ID ?? "(not set)"}\n`,
+  );
+  process.stdout.write(
+    `TELEGRAM_SIGNAL_TTL_MS= ${env.TELEGRAM_SIGNAL_TTL_MS}\n`,
+  );
+  process.stdout.write(
+    `TELEGRAM_DAILY_SIGNAL_CAP = ${env.TELEGRAM_DAILY_SIGNAL_CAP}\n`,
+  );
+  process.stdout.write(
+    `TELEGRAM_PAIR_REJECT_COOLDOWN_MS = ${env.TELEGRAM_PAIR_REJECT_COOLDOWN_MS}\n`,
+  );
+  process.stdout.write(
+    `TELEGRAM_PRICE_DRIFT_BPS = ${env.TELEGRAM_PRICE_DRIFT_BPS}\n`,
+  );
 
   // Step 2 — secrets present
   process.stdout.write("\n=== Windows Credential Manager ===\n");
@@ -30,8 +46,15 @@ async function main(): Promise<void> {
   const results = await Promise.all(
     REQUIRED.map(async (n) => ({ n, ok: await provider.has(n) })),
   );
+  const optionalResults = await Promise.all(
+    OPTIONAL_FUTURE.map(async (n) => ({ n, ok: await provider.has(n) })),
+  );
   for (const r of results) {
     const marker = r.ok ? "[OK]" : "[MISSING]";
+    process.stdout.write(`${marker}   kr8tiv-mexc-bot/${r.n}\n`);
+  }
+  for (const r of optionalResults) {
+    const marker = r.ok ? "[OPTIONAL_OK]" : "[OPTIONAL_MISSING]";
     process.stdout.write(`${marker}   kr8tiv-mexc-bot/${r.n}\n`);
   }
   const missing = results.filter((x) => !x.ok).map((x) => x.n);
@@ -41,6 +64,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   process.stdout.write("\nAll Phase 1 prerequisites satisfied.\n");
+  if (optionalResults.some((x) => !x.ok)) {
+    process.stdout.write(
+      "Phase 3 Telegram credentials are not provisioned yet (safe until Telegram integration is enabled).\n",
+    );
+  }
 }
 
 main().catch((err: unknown) => {
