@@ -383,29 +383,44 @@ describe("fetchExchangeInfoForSymbol (Phase 2 EXEC-04 + EXEC-05)", () => {
 // ---------------------------------------------------------------------------
 
 describe("EXEC-02 + EXEC-03 TypeScript enforcement (compile-time)", () => {
+  function makeCompileOnlyClient(): MEXCSpotClient {
+    const createOrder = vi.fn().mockResolvedValue({
+      id: "compile-only-order",
+      symbol: "ETH/USDT",
+      side: "buy",
+      type: "market",
+      status: "open",
+      amount: 0,
+      filled: 0,
+      cost: 0,
+      info: {},
+    });
+    return makeStubClient({ createOrder } as ExchangeMock);
+  }
+
   it("rejects placeMarketBuy() call missing clientOrderId (EXEC-02)", () => {
-    const client = makeStubClient({} as ExchangeMock);
+    const client = makeCompileOnlyClient();
     // @ts-expect-error - clientOrderId is required by EXEC-02
     void client.placeMarketBuy({ symbol: "ETHUSDT", quoteOrderQty: "5" });
     expect(true).toBe(true); // the assertion is the ts-expect-error above
   });
 
   it("rejects placeMarketSell() call missing clientOrderId (EXEC-02)", () => {
-    const client = makeStubClient({} as ExchangeMock);
+    const client = makeCompileOnlyClient();
     // @ts-expect-error - clientOrderId is required by EXEC-02
     void client.placeMarketSell({ symbol: "ETHUSDT", quantity: "0.001" });
     expect(true).toBe(true);
   });
 
   it("rejects placeMarketSell() call missing quantity", () => {
-    const client = makeStubClient({} as ExchangeMock);
+    const client = makeCompileOnlyClient();
     // @ts-expect-error - quantity is required (market sells need base-asset amount)
     void client.placeMarketSell({ symbol: "ETHUSDT", clientOrderId: "x" });
     expect(true).toBe(true);
   });
 
   it("rejects stopPrice param (EXEC-03 amendment D-05b — MEXC spot has no server-side stops)", () => {
-    const client = makeStubClient({} as ExchangeMock);
+    const client = makeCompileOnlyClient();
     void client.placeMarketBuy({
       symbol: "ETHUSDT",
       clientOrderId: "x",
@@ -417,7 +432,7 @@ describe("EXEC-02 + EXEC-03 TypeScript enforcement (compile-time)", () => {
   });
 
   it("rejects triggerPrice param (EXEC-03 amendment D-05b)", () => {
-    const client = makeStubClient({} as ExchangeMock);
+    const client = makeCompileOnlyClient();
     void client.placeMarketSell({
       symbol: "ETHUSDT",
       clientOrderId: "x",
@@ -429,7 +444,7 @@ describe("EXEC-02 + EXEC-03 TypeScript enforcement (compile-time)", () => {
   });
 
   it("rejects stopLoss / takeProfit params (EXEC-03 amendment D-05b)", () => {
-    const client = makeStubClient({} as ExchangeMock);
+    const client = makeCompileOnlyClient();
     void client.placeMarketBuy({
       symbol: "ETHUSDT",
       clientOrderId: "x",
