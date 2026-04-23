@@ -23,6 +23,7 @@
     "reconcile": "tsx scripts/reconcile.ts",
     "place-order": "tsx apps/core/src/place-order.ts",
     "signals:scan": "tsx scripts/scan-signals.ts",
+    "signals:watch": "tsx scripts/watch-signals.ts",
     "lefthook:install": "pnpm exec lefthook install"
   },
   "devDependencies": {

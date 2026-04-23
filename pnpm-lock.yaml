@@ -365,6 +365,9 @@ importers:
       '@kr8tiv/secrets':
         specifier: workspace:*
         version: link:../packages/secrets
+      '@kr8tiv/shared-schemas':
+        specifier: workspace:*
+        version: link:../packages/shared-schemas
       '@kr8tiv/shared-types':
         specifier: workspace:*
         version: link:../packages/shared-types

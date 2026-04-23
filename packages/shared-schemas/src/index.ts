@@ -7,5 +7,6 @@
  * - Plan 04-xx: trade history + style fingerprint schemas
  */
 export * from "./mexc.js";
+export * from "./signal-watch.js";
 export * from "./signals.js";
 export * from "./telegram.js";

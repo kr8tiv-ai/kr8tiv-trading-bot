@@ -40,7 +40,7 @@ import { WindowsCredentialManagerProvider } from "@kr8tiv/secrets";
  */
 async function clearStaleState(
   redis: Redis,
-  logCtx: ReturnType<typeof logger.child>,
+  logCtx: Pick<typeof logger, "info">,
 ): Promise<number> {
   let deleted = 0;
   for (const pattern of [

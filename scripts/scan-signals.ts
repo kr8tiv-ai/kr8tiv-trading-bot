@@ -1,16 +1,19 @@
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   FUTURES_KLINE_INTERVAL_MS,
   MEXCFuturesClient,
   SUPPORTED_FUTURES_SIGNAL_SYMBOLS,
   type FuturesKlineInterval,
 } from "@kr8tiv/mexc-futures";
-import { analyzeMarket } from "@kr8tiv/signal-engine";
+import { analyzeMarket, type AnalyzeMarketInput } from "@kr8tiv/signal-engine";
 import { createLogger } from "@kr8tiv/logger";
+import { type MarketScan } from "@kr8tiv/shared-schemas";
 import type { SecretProvider } from "@kr8tiv/secrets";
 
 const log = createLogger().child({ service: "signals-scan" });
 
-type Options = {
+export type ScanOptions = {
   json: boolean;
   symbols: string[];
   shortInterval: FuturesKlineInterval;
@@ -18,7 +21,7 @@ type Options = {
   limit: number;
 };
 
-const publicOnlyProvider: SecretProvider = {
+export const publicOnlyProvider: SecretProvider = {
   async get(name) {
     throw new Error(`public-only provider does not contain secret: ${name}`);
   },
@@ -48,8 +51,8 @@ function usage(): never {
   );
 }
 
-function parseArgs(argv: string[]): Options {
-  const options: Options = {
+export function parseScanArgs(argv: string[]): ScanOptions {
+  const options: ScanOptions = {
     json: false,
     symbols: [...SUPPORTED_FUTURES_SIGNAL_SYMBOLS],
     shortInterval: "Min15",
@@ -107,7 +110,7 @@ function parseArgs(argv: string[]): Options {
   return options;
 }
 
-function toHumanInterval(interval: FuturesKlineInterval): string {
+export function toHumanInterval(interval: FuturesKlineInterval): string {
   switch (interval) {
     case "Min1":
       return "1m";
@@ -127,7 +130,7 @@ function toHumanInterval(interval: FuturesKlineInterval): string {
   throw new Error(`unsupported interval: ${interval}`);
 }
 
-function formatScan(scan: ReturnType<typeof analyzeMarket>): string {
+export function formatScan(scan: MarketScan): string {
   const lines = [
     `=== ${scan.symbol} ===`,
     `regime: ${scan.regime} | price: ${scan.currentPrice.toFixed(4)}`,
@@ -162,11 +165,11 @@ function formatScan(scan: ReturnType<typeof analyzeMarket>): string {
   return lines.join("\n");
 }
 
-async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2));
-  const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
-
-  const scans = await Promise.all(
+export async function scanSymbols(
+  client: MEXCFuturesClient,
+  options: ScanOptions,
+): Promise<MarketScan[]> {
+  return Promise.all(
     options.symbols.map(async (symbol) => {
       const [shortCandles, longCandles] = await Promise.all([
         client.fetchCandles({
@@ -181,16 +184,23 @@ async function main(): Promise<void> {
         }),
       ]);
 
-      return analyzeMarket({
+      const input: AnalyzeMarketInput = {
         symbol,
         market: "mexc-futures",
         shortTimeframe: toHumanInterval(options.shortInterval),
         longTimeframe: toHumanInterval(options.longInterval),
         shortCandles,
         longCandles,
-      });
+      };
+      return analyzeMarket(input);
     }),
   );
+}
+
+async function main(): Promise<void> {
+  const options = parseScanArgs(process.argv.slice(2));
+  const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
+  const scans = await scanSymbols(client, options);
 
   if (options.json) {
     process.stdout.write(`${JSON.stringify(scans, null, 2)}\n`);
@@ -208,8 +218,13 @@ async function main(): Promise<void> {
   process.stdout.write("\n");
 }
 
-main().catch((err) => {
-  log.fatal({ err }, "signal scan failed");
-  process.stderr.write(`${String(err)}\n`);
-  process.exit(1);
-});
+if (
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main().catch((err) => {
+    log.fatal({ err }, "signal scan failed");
+    process.stderr.write(`${String(err)}\n`);
+    process.exit(1);
+  });
+}

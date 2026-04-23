@@ -12,6 +12,7 @@
     "@kr8tiv/mexc-spot": "workspace:*",
     "@kr8tiv/redis-client": "workspace:*",
     "@kr8tiv/secrets": "workspace:*",
+    "@kr8tiv/shared-schemas": "workspace:*",
     "@kr8tiv/signal-engine": "workspace:*",
     "@kr8tiv/shared-types": "workspace:*"
   },
