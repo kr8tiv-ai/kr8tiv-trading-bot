@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MEXCFuturesClient } from "./client.js";
 import { MEXCSpotClient } from "@kr8tiv/mexc-spot";
 import { wrap, type SecretProvider } from "@kr8tiv/secrets";
@@ -83,5 +83,79 @@ describe("MEXCFuturesClient.create (unit)", () => {
     expect(names).not.toContain("placeOrder");
     expect(names).not.toContain("createOrder");
     expect(names).not.toContain("cancelOrder");
+  });
+});
+
+describe("MEXCFuturesClient.fetchCandles (public futures kline)", () => {
+  it("maps official BTC_USDT kline arrays into typed candles", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          code: 0,
+          data: {
+            time: [1_700_000_000, 1_700_000_900],
+            open: [42000, 42100],
+            close: [42100, 42250],
+            high: [42150, 42300],
+            low: [41900, 42050],
+            vol: [1000, 1200],
+            amount: [42_000_000, 50_700_000],
+          },
+        }),
+      } as Response);
+
+    const client = await MEXCFuturesClient.create({ secrets: mockProvider() });
+    const candles = await client.fetchCandles({
+      symbol: "BTCUSDT",
+      interval: "Min15",
+      limit: 2,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0]?.[0]).toEqual(
+      expect.stringContaining("/api/v1/contract/kline/BTC_USDT?"),
+    );
+    expect(candles).toEqual([
+      {
+        openTimeMs: 1_700_000_000_000,
+        closeTimeMs: 1_700_000_900_000,
+        open: 42000,
+        high: 42150,
+        low: 41900,
+        close: 42100,
+        volume: 1000,
+        quoteVolume: 42_000_000,
+      },
+      {
+        openTimeMs: 1_700_000_900_000,
+        closeTimeMs: 1_700_001_800_000,
+        open: 42100,
+        high: 42300,
+        low: 42050,
+        close: 42250,
+        volume: 1200,
+        quoteVolume: 50_700_000,
+      },
+    ]);
+
+    fetchSpy.mockRestore();
+  });
+
+  it("rejects unsupported symbols before a network call", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const client = await MEXCFuturesClient.create({ secrets: mockProvider() });
+
+    await expect(
+      client.fetchCandles({
+        symbol: "DOGEUSDT",
+        interval: "Min15",
+      }),
+    ).rejects.toThrow(/unsupported futures symbol/i);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });

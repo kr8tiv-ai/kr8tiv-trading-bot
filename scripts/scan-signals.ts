@@ -1,0 +1,215 @@
+import {
+  FUTURES_KLINE_INTERVAL_MS,
+  MEXCFuturesClient,
+  SUPPORTED_FUTURES_SIGNAL_SYMBOLS,
+  type FuturesKlineInterval,
+} from "@kr8tiv/mexc-futures";
+import { analyzeMarket } from "@kr8tiv/signal-engine";
+import { createLogger } from "@kr8tiv/logger";
+import type { SecretProvider } from "@kr8tiv/secrets";
+
+const log = createLogger().child({ service: "signals-scan" });
+
+type Options = {
+  json: boolean;
+  symbols: string[];
+  shortInterval: FuturesKlineInterval;
+  longInterval: FuturesKlineInterval;
+  limit: number;
+};
+
+const publicOnlyProvider: SecretProvider = {
+  async get(name) {
+    throw new Error(`public-only provider does not contain secret: ${name}`);
+  },
+  async has() {
+    return false;
+  },
+  async list() {
+    return [];
+  },
+  async set() {
+    /* no-op */
+  },
+  async delete() {
+    /* no-op */
+  },
+};
+
+function usage(): never {
+  throw new Error(
+    [
+      "Usage: pnpm signals:scan [--json] [--symbols BTCUSDT,ETHUSDT,SOLUSDT]",
+      "                       [--short Min15] [--long Hour4] [--limit 160]",
+      "",
+      `Supported symbols: ${SUPPORTED_FUTURES_SIGNAL_SYMBOLS.join(", ")}`,
+      `Supported intervals: ${Object.keys(FUTURES_KLINE_INTERVAL_MS).join(", ")}`,
+    ].join("\n"),
+  );
+}
+
+function parseArgs(argv: string[]): Options {
+  const options: Options = {
+    json: false,
+    symbols: [...SUPPORTED_FUTURES_SIGNAL_SYMBOLS],
+    shortInterval: "Min15",
+    longInterval: "Hour4",
+    limit: 160,
+  };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--json") {
+      options.json = true;
+      continue;
+    }
+    if (arg === "--symbols") {
+      const value = argv[i + 1];
+      if (!value) usage();
+      options.symbols = value
+        .split(",")
+        .map((item) => item.trim().toUpperCase())
+        .filter(Boolean);
+      i += 1;
+      continue;
+    }
+    if (arg === "--short") {
+      const value = argv[i + 1] as FuturesKlineInterval | undefined;
+      if (!value || !(value in FUTURES_KLINE_INTERVAL_MS)) usage();
+      options.shortInterval = value;
+      i += 1;
+      continue;
+    }
+    if (arg === "--long") {
+      const value = argv[i + 1] as FuturesKlineInterval | undefined;
+      if (!value || !(value in FUTURES_KLINE_INTERVAL_MS)) usage();
+      options.longInterval = value;
+      i += 1;
+      continue;
+    }
+    if (arg === "--limit") {
+      const value = Number(argv[i + 1]);
+      if (!Number.isInteger(value) || value < 60) usage();
+      options.limit = value;
+      i += 1;
+      continue;
+    }
+    usage();
+  }
+
+  if (options.symbols.length === 0) usage();
+  for (const symbol of options.symbols) {
+    if (!SUPPORTED_FUTURES_SIGNAL_SYMBOLS.includes(symbol as never)) {
+      throw new Error(`unsupported symbol in --symbols: ${symbol}`);
+    }
+  }
+
+  return options;
+}
+
+function toHumanInterval(interval: FuturesKlineInterval): string {
+  switch (interval) {
+    case "Min1":
+      return "1m";
+    case "Min5":
+      return "5m";
+    case "Min15":
+      return "15m";
+    case "Min30":
+      return "30m";
+    case "Hour1":
+      return "1h";
+    case "Hour4":
+      return "4h";
+    case "Day1":
+      return "1d";
+  }
+  throw new Error(`unsupported interval: ${interval}`);
+}
+
+function formatScan(scan: ReturnType<typeof analyzeMarket>): string {
+  const lines = [
+    `=== ${scan.symbol} ===`,
+    `regime: ${scan.regime} | price: ${scan.currentPrice.toFixed(4)}`,
+  ];
+
+  if (scan.warnings.length > 0) {
+    lines.push(`warnings: ${scan.warnings.join(" | ")}`);
+  }
+
+  if (scan.ideas.length === 0) {
+    lines.push("ideas: none");
+  } else {
+    lines.push("ideas:");
+    for (const idea of scan.ideas) {
+      lines.push(
+        `- ${idea.horizon} ${idea.direction} | conf ${(idea.confidence * 100).toFixed(0)}% | ` +
+          `entry ${idea.entryPrice.toFixed(4)} | invalidation ${idea.invalidationPrice.toFixed(4)} | ` +
+          `targets ${idea.targets.map((target) => target.toFixed(4)).join(", ")}`,
+      );
+      lines.push(`  thesis: ${idea.thesis}`);
+    }
+  }
+
+  lines.push("drivers:");
+  for (const signal of scan.strategies) {
+    lines.push(
+      `- ${signal.timeframe} ${signal.strategy}: ${signal.bias} ${(signal.confidence * 100).toFixed(0)}% ` +
+        `| ${signal.summary}`,
+    );
+  }
+
+  return lines.join("\n");
+}
+
+async function main(): Promise<void> {
+  const options = parseArgs(process.argv.slice(2));
+  const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
+
+  const scans = await Promise.all(
+    options.symbols.map(async (symbol) => {
+      const [shortCandles, longCandles] = await Promise.all([
+        client.fetchCandles({
+          symbol,
+          interval: options.shortInterval,
+          limit: options.limit,
+        }),
+        client.fetchCandles({
+          symbol,
+          interval: options.longInterval,
+          limit: options.limit,
+        }),
+      ]);
+
+      return analyzeMarket({
+        symbol,
+        market: "mexc-futures",
+        shortTimeframe: toHumanInterval(options.shortInterval),
+        longTimeframe: toHumanInterval(options.longInterval),
+        shortCandles,
+        longCandles,
+      });
+    }),
+  );
+
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(scans, null, 2)}\n`);
+    return;
+  }
+
+  process.stdout.write(
+    [
+      `Signal scan complete for ${options.symbols.join(", ")}`,
+      `windows: ${toHumanInterval(options.shortInterval)} + ${toHumanInterval(options.longInterval)}`,
+      "",
+      ...scans.map((scan) => formatScan(scan)),
+    ].join("\n"),
+  );
+  process.stdout.write("\n");
+}
+
+main().catch((err) => {
+  log.fatal({ err }, "signal scan failed");
+  process.stderr.write(`${String(err)}\n`);
+  process.exit(1);
+});

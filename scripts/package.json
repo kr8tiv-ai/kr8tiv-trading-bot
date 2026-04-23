@@ -8,9 +8,11 @@
     "@kr8tiv/db": "workspace:*",
     "@kr8tiv/executor": "workspace:*",
     "@kr8tiv/logger": "workspace:*",
+    "@kr8tiv/mexc-futures": "workspace:*",
     "@kr8tiv/mexc-spot": "workspace:*",
     "@kr8tiv/redis-client": "workspace:*",
     "@kr8tiv/secrets": "workspace:*",
+    "@kr8tiv/signal-engine": "workspace:*",
     "@kr8tiv/shared-types": "workspace:*"
   },
   "devDependencies": {

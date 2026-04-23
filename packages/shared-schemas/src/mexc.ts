@@ -28,6 +28,58 @@ export const MexcFuturesPingSchema = z.object({
 export type MexcFuturesPing = z.infer<typeof MexcFuturesPingSchema>;
 
 /**
+ * GET /api/v1/contract/kline/{symbol} (MEXC futures/contract)
+ * Public futures candlesticks used by the Phase 4 signal scanner. The API
+ * returns parallel numeric arrays keyed by `time/open/close/high/low/vol`.
+ * `time` is in epoch SECONDS (empirically verified 2026-04-23).
+ *
+ * Docs: https://www.mexc.com/api-docs/futures/market-endpoints
+ */
+const MexcNumericSeriesSchema = z.array(z.coerce.number());
+export const MexcFuturesKlineDataSchema = z
+  .object({
+    time: z.array(z.coerce.number().int().positive()),
+    open: MexcNumericSeriesSchema,
+    close: MexcNumericSeriesSchema,
+    high: MexcNumericSeriesSchema,
+    low: MexcNumericSeriesSchema,
+    vol: MexcNumericSeriesSchema,
+    amount: MexcNumericSeriesSchema.optional().default([]),
+  })
+  .superRefine((data, ctx) => {
+    const requiredLengths = [
+      data.time.length,
+      data.open.length,
+      data.close.length,
+      data.high.length,
+      data.low.length,
+      data.vol.length,
+    ];
+    if (new Set(requiredLengths).size !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "kline arrays must all have identical lengths",
+      });
+    }
+    if (data.amount.length !== 0 && data.amount.length !== data.time.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "amount array must be empty or match time.length",
+      });
+    }
+  });
+export type MexcFuturesKlineData = z.infer<typeof MexcFuturesKlineDataSchema>;
+
+export const MexcFuturesKlineResponseSchema = z.object({
+  success: z.boolean(),
+  code: z.coerce.number(),
+  data: MexcFuturesKlineDataSchema,
+});
+export type MexcFuturesKlineResponse = z.infer<
+  typeof MexcFuturesKlineResponseSchema
+>;
+
+/**
  * Unified ping response used by both MEXCSpotClient.ping() and MEXCFuturesClient.ping().
  * The clients adapt each surface's raw response into this shape so the boot
  * sequence (plan 01-05) gets a consistent `{ serverTime: number }`.

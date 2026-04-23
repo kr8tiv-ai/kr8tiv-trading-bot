@@ -298,6 +298,19 @@ importers:
         specifier: ^5.7
         version: 5.9.3
 
+  packages/signal-engine:
+    dependencies:
+      '@kr8tiv/shared-schemas':
+        specifier: workspace:*
+        version: link:../shared-schemas
+    devDependencies:
+      typescript:
+        specifier: ^5.7
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/telegram-bot:
     dependencies:
       '@kr8tiv/config':
@@ -340,6 +353,9 @@ importers:
       '@kr8tiv/logger':
         specifier: workspace:*
         version: link:../packages/logger
+      '@kr8tiv/mexc-futures':
+        specifier: workspace:*
+        version: link:../packages/mexc-futures
       '@kr8tiv/mexc-spot':
         specifier: workspace:*
         version: link:../packages/mexc-spot
@@ -352,6 +368,9 @@ importers:
       '@kr8tiv/shared-types':
         specifier: workspace:*
         version: link:../packages/shared-types
+      '@kr8tiv/signal-engine':
+        specifier: workspace:*
+        version: link:../packages/signal-engine
     devDependencies:
       '@types/node':
         specifier: ^22

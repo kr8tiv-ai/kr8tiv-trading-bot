@@ -2,14 +2,53 @@ import ccxt, { type Exchange } from "ccxt";
 import { env } from "@kr8tiv/config";
 import { unsafeReveal, type SecretProvider } from "@kr8tiv/secrets";
 import {
+  MarketCandleSchema,
+  MexcFuturesKlineResponseSchema,
   MexcFuturesPingSchema,
   MexcPingResponseSchema,
+  type MarketCandle,
 } from "@kr8tiv/shared-schemas";
 
 export interface MEXCFuturesClientConfig {
   secrets: SecretProvider;
   /** Override for tests. Defaults to env.MEXC_FUTURES_BASE_URL. */
   baseUrl?: string;
+}
+
+export const SUPPORTED_FUTURES_SIGNAL_SYMBOLS = [
+  "BTCUSDT",
+  "ETHUSDT",
+  "SOLUSDT",
+] as const;
+export type SupportedFuturesSignalSymbol =
+  (typeof SUPPORTED_FUTURES_SIGNAL_SYMBOLS)[number];
+
+export const FUTURES_KLINE_INTERVAL_MS = {
+  Min1: 60_000,
+  Min5: 300_000,
+  Min15: 900_000,
+  Min30: 1_800_000,
+  Hour1: 3_600_000,
+  Hour4: 14_400_000,
+  Day1: 86_400_000,
+} as const;
+export type FuturesKlineInterval = keyof typeof FUTURES_KLINE_INTERVAL_MS;
+
+export interface FetchFuturesCandlesParams {
+  symbol: SupportedFuturesSignalSymbol | string;
+  interval: FuturesKlineInterval;
+  limit?: number;
+}
+
+const MarketCandleArraySchema = MarketCandleSchema.array();
+
+function toMexcContractSymbol(
+  symbol: FetchFuturesCandlesParams["symbol"],
+): string {
+  if (!SUPPORTED_FUTURES_SIGNAL_SYMBOLS.includes(symbol as SupportedFuturesSignalSymbol)) {
+    throw new Error(`unsupported futures symbol: ${symbol}`);
+  }
+  return symbol.replace("USDT", "_USDT");
 }
 
 /**
@@ -32,9 +71,11 @@ export interface MEXCFuturesClientConfig {
  */
 export class MEXCFuturesClient {
   readonly exchange: Exchange;
+  readonly baseUrl: string;
 
-  private constructor(exchange: Exchange) {
+  private constructor(exchange: Exchange, baseUrl: string) {
     this.exchange = exchange;
+    this.baseUrl = baseUrl;
   }
 
   static async create(config: MEXCFuturesClientConfig): Promise<MEXCFuturesClient> {
@@ -73,7 +114,7 @@ export class MEXCFuturesClient {
       },
     } as ConstructorParameters<typeof ccxt.mexc>[0]) as Exchange;
 
-    return new MEXCFuturesClient(exchange);
+    return new MEXCFuturesClient(exchange, baseUrl);
   }
 
   /**
@@ -92,7 +133,7 @@ export class MEXCFuturesClient {
       // biome-ignore lint/suspicious/noExplicitAny: CCXT implicit methods aren't typed
       raw = await (this.exchange as any).contractPublicGetPing();
     } else {
-      const url = `${env.MEXC_FUTURES_BASE_URL}/api/v1/contract/ping`;
+      const url = `${this.baseUrl}/api/v1/contract/ping`;
       const resp = await fetch(url);
       if (!resp.ok) {
         throw new Error(
@@ -111,6 +152,51 @@ export class MEXCFuturesClient {
     }
     // Unified shape the boot sequence expects.
     return MexcPingResponseSchema.parse({ serverTime: parsed.data });
+  }
+
+  /**
+   * Public futures kline fetch used by the read-only signal scanner. Uses the
+   * official MEXC contract endpoint and returns normalized MarketCandle objects
+   * with millisecond timestamps. `limit` is translated into a rolling
+   * start/end window because the API exposes a time range rather than a direct
+   * `limit=N` parameter.
+   */
+  async fetchCandles(
+    params: FetchFuturesCandlesParams,
+  ): Promise<MarketCandle[]> {
+    const contractSymbol = toMexcContractSymbol(params.symbol);
+    const intervalMs = FUTURES_KLINE_INTERVAL_MS[params.interval];
+    const limit = Math.min(Math.max(Math.trunc(params.limit ?? 200), 2), 500);
+    const endSeconds = Math.floor(Date.now() / 1000);
+    const startSeconds =
+      endSeconds - Math.ceil((intervalMs / 1000) * limit);
+    const url =
+      `${this.baseUrl}/api/v1/contract/kline/${contractSymbol}` +
+      `?interval=${params.interval}&start=${startSeconds}&end=${endSeconds}`;
+
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      throw new Error(`MEXC futures kline failed: HTTP ${resp.status} from ${url}`);
+    }
+
+    const parsed = MexcFuturesKlineResponseSchema.parse(await resp.json());
+    if (!parsed.success) {
+      throw new Error(
+        `MEXC futures kline returned success=false (code=${parsed.code})`,
+      );
+    }
+
+    const candles = parsed.data.time.map((openTimeSec, index) => ({
+      openTimeMs: openTimeSec * 1000,
+      closeTimeMs: openTimeSec * 1000 + intervalMs,
+      open: parsed.data.open[index] ?? 0,
+      high: parsed.data.high[index] ?? 0,
+      low: parsed.data.low[index] ?? 0,
+      close: parsed.data.close[index] ?? 0,
+      volume: parsed.data.vol[index] ?? 0,
+      quoteVolume: parsed.data.amount[index],
+    }));
+    return MarketCandleArraySchema.parse(candles);
   }
 
   // NO order-placement methods here. Phase 6 adds placeFuturesOrder etc.
