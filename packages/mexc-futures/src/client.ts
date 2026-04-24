@@ -3,9 +3,11 @@ import { env } from "@kr8tiv/config";
 import { unsafeReveal, type SecretProvider } from "@kr8tiv/secrets";
 import {
   MarketCandleSchema,
+  ImportedTradeSchema,
   MexcFuturesKlineResponseSchema,
   MexcFuturesPingSchema,
   MexcPingResponseSchema,
+  type ImportedTrade,
   type MarketCandle,
 } from "@kr8tiv/shared-schemas";
 
@@ -40,6 +42,12 @@ export interface FetchFuturesCandlesParams {
   limit?: number;
 }
 
+export interface FetchFuturesTradesPageParams {
+  symbol: SupportedFuturesSignalSymbol | string;
+  since?: number;
+  limit?: number;
+}
+
 const MarketCandleArraySchema = MarketCandleSchema.array();
 
 function toMexcContractSymbol(
@@ -49,6 +57,32 @@ function toMexcContractSymbol(
     throw new Error(`unsupported futures symbol: ${symbol}`);
   }
   return symbol.replace("USDT", "_USDT");
+}
+
+function toCcxtSwapSymbol(symbol: FetchFuturesTradesPageParams["symbol"]): string {
+  if (!SUPPORTED_FUTURES_SIGNAL_SYMBOLS.includes(symbol as SupportedFuturesSignalSymbol)) {
+    throw new Error(`unsupported futures symbol: ${symbol}`);
+  }
+  return symbol.replace("USDT", "/USDT:USDT");
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function asNumber(value: unknown, fallback: number = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function asString(value: unknown, fallback: string = ""): string {
+  return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
 /**
@@ -197,6 +231,55 @@ export class MEXCFuturesClient {
       quoteVolume: parsed.data.amount[index],
     }));
     return MarketCandleArraySchema.parse(candles);
+  }
+
+  /**
+   * Read-only authenticated futures trade history page. This is intentionally
+   * not a write-path unlock: it only feeds style/fingerprint/accountability
+   * analytics from Matt's actual BTC/ETH/SOL futures behavior.
+   */
+  async fetchMyTradesPage(
+    params: FetchFuturesTradesPageParams,
+  ): Promise<ImportedTrade[]> {
+    const ccxtSymbol = toCcxtSwapSymbol(params.symbol);
+    const raw = await this.exchange.fetchMyTrades(
+      ccxtSymbol,
+      params.since,
+      params.limit,
+      { type: "swap" },
+    );
+
+    const rows = raw.map((item) => {
+      const trade = asRecord(item);
+      const info = asRecord(trade.info);
+      const fee = asRecord(trade.fee);
+      const price = asNumber(trade.price);
+      const size = asNumber(trade.amount);
+      const timestamp = asNumber(trade.timestamp);
+      const sourceOrderId = asString(trade.order);
+      const sourceTradeId = asString(
+        trade.id,
+        asString(info.dealId, `${timestamp}:${trade.side}:${price}:${size}`),
+      );
+
+      return {
+        venue: "mexc",
+        market: "mexc-futures",
+        symbol: params.symbol,
+        side: trade.side,
+        price,
+        size,
+        quoteNotional: asNumber(trade.cost, price * size),
+        fee: asNumber(fee.cost),
+        feeCurrency: asString(fee.currency, "USDT"),
+        executedAtMs: timestamp,
+        sourceTradeId,
+        sourceOrderId: sourceOrderId || undefined,
+        rawResponse: JSON.stringify(Object.keys(info).length > 0 ? info : trade),
+      };
+    });
+
+    return ImportedTradeSchema.array().parse(rows);
   }
 
   // NO order-placement methods here. Phase 6 adds placeFuturesOrder etc.

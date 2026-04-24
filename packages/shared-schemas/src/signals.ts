@@ -1,7 +1,7 @@
 import { z } from "zod";
-
-export const MarketSchema = z.enum(["mexc-futures", "mexc-spot"]);
-export type Market = z.infer<typeof MarketSchema>;
+import { StyleConflictSchema } from "./history.js";
+import { MarketSchema } from "./market.js";
+export type { Market } from "./market.js";
 
 export const MarketRegimeSchema = z.enum(["bullish", "bearish", "range"]);
 export type MarketRegime = z.infer<typeof MarketRegimeSchema>;
@@ -74,6 +74,7 @@ export const TradeIdeaSchema = z
     thesis: z.string().min(1),
     reasons: z.array(z.string().min(1)).min(1),
     strategies: z.array(StrategySignalSchema),
+    conflictsWithStyle: z.array(StyleConflictSchema).optional(),
   })
   .superRefine((idea, ctx) => {
     if (
@@ -107,4 +108,3 @@ export const MarketScanSchema = z.object({
   ideas: z.array(TradeIdeaSchema),
 });
 export type MarketScan = z.infer<typeof MarketScanSchema>;
-

@@ -3,6 +3,7 @@ export {
   MEXCFuturesClient,
   SUPPORTED_FUTURES_SIGNAL_SYMBOLS,
   type FetchFuturesCandlesParams,
+  type FetchFuturesTradesPageParams,
   type FuturesKlineInterval,
   type MEXCFuturesClientConfig,
   type SupportedFuturesSignalSymbol,

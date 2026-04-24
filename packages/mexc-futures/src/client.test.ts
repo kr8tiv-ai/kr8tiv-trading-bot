@@ -4,6 +4,10 @@ import { MEXCSpotClient } from "@kr8tiv/mexc-spot";
 import { wrap, type SecretProvider } from "@kr8tiv/secrets";
 import type { SecretName, Secret } from "@kr8tiv/shared-types";
 
+type ExchangeMock = {
+  fetchMyTrades?: (...args: unknown[]) => unknown;
+};
+
 function mockProvider(has: Partial<Record<SecretName, string>> = {}): SecretProvider {
   const values: Partial<Record<SecretName, string>> = {
     "mexc-spot-access": "mx0mockaccess1234567890",
@@ -30,6 +34,14 @@ function mockProvider(has: Partial<Record<SecretName, string>> = {}): SecretProv
       /* no-op */
     },
   };
+}
+
+function makeStubClient(exchangeMock: ExchangeMock): MEXCFuturesClient {
+  return new (
+    MEXCFuturesClient as unknown as {
+      new (ex: unknown, baseUrl: string): MEXCFuturesClient;
+    }
+  )(exchangeMock, "https://contract.mexc.com");
 }
 
 describe("MEXCFuturesClient.create (unit)", () => {
@@ -157,5 +169,69 @@ describe("MEXCFuturesClient.fetchCandles (public futures kline)", () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+});
+
+describe("MEXCFuturesClient.fetchMyTradesPage (read-only futures history)", () => {
+  it("normalizes authenticated CCXT futures trades into ImportedTrade rows", async () => {
+    const fetchMyTrades = vi.fn().mockResolvedValue([
+      {
+        id: "t-1",
+        order: "o-1",
+        timestamp: 1_763_515_965_654,
+        side: "buy",
+        price: 93_500,
+        amount: 0.001,
+        cost: 93.5,
+        fee: { cost: 0.04, currency: "USDT" },
+        info: { dealId: "t-1" },
+      },
+    ]);
+    const client = makeStubClient({ fetchMyTrades });
+
+    const rows = await client.fetchMyTradesPage({
+      symbol: "BTCUSDT",
+      since: 1_763_515_000_000,
+      limit: 50,
+    });
+
+    expect(fetchMyTrades).toHaveBeenCalledWith(
+      "BTC/USDT:USDT",
+      1_763_515_000_000,
+      50,
+      { type: "swap" },
+    );
+    expect(rows).toEqual([
+      {
+        venue: "mexc",
+        market: "mexc-futures",
+        symbol: "BTCUSDT",
+        side: "buy",
+        price: 93_500,
+        size: 0.001,
+        quoteNotional: 93.5,
+        fee: 0.04,
+        feeCurrency: "USDT",
+        executedAtMs: 1_763_515_965_654,
+        sourceTradeId: "t-1",
+        sourceOrderId: "o-1",
+        rawResponse: JSON.stringify({ dealId: "t-1" }),
+      },
+    ]);
+  });
+
+  it("rejects unsupported symbols before the private history call", async () => {
+    const fetchMyTrades = vi.fn();
+    const client = makeStubClient({ fetchMyTrades });
+
+    await expect(
+      client.fetchMyTradesPage({
+        symbol: "DOGEUSDT",
+        since: 1,
+        limit: 50,
+      }),
+    ).rejects.toThrow(/unsupported futures symbol/i);
+
+    expect(fetchMyTrades).not.toHaveBeenCalled();
   });
 });

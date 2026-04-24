@@ -7,6 +7,17 @@
 
 Weekend MVP scope. Everything required to ship "one live ETH spot trade, approved via Telegram, with leak-report evidence from 60 days of history."
 
+## 2026-04-23 Product Direction Addendum
+
+See `docs/plans/2026-04-23-futures-accountability-product-direction.md`.
+
+Non-forgettable direction for all future implementation:
+- advisor layer is **futures-first on BTCUSDT / ETHUSDT / SOLUSDT**
+- product must distinguish `sniper` (30x–100x) vs `core` (<=30x) trade modes
+- accountability is part of the product, not a nice-to-have
+- a local manual-trade input / journal app is required so Matt can record thesis, stop, target, leverage, and "why this trade?" before and after execution
+- style analysis must learn not just entry timing but leverage, sizing, and decision quality
+
 ### Foundation (FND) — scaffold, secrets, MEXC read access
 
 - [x] **FND-01**: Project scaffolded as pnpm workspaces + Turborepo monorepo on Node.js 22 LTS + TypeScript 5.5+ strict

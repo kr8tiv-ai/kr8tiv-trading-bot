@@ -88,6 +88,19 @@ importers:
         specifier: ^2.1
         version: 2.1.9(@types/node@22.19.17)
 
+  packages/accountability:
+    dependencies:
+      '@kr8tiv/shared-schemas':
+        specifier: workspace:*
+        version: link:../shared-schemas
+    devDependencies:
+      typescript:
+        specifier: ^5.7
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/config:
     dependencies:
       '@t3-oss/env-core':
@@ -311,6 +324,19 @@ importers:
         specifier: ^2.1
         version: 2.1.9(@types/node@22.19.17)
 
+  packages/style-engine:
+    dependencies:
+      '@kr8tiv/shared-schemas':
+        specifier: workspace:*
+        version: link:../shared-schemas
+    devDependencies:
+      typescript:
+        specifier: ^5.7
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/telegram-bot:
     dependencies:
       '@kr8tiv/config':
@@ -341,6 +367,9 @@ importers:
 
   scripts:
     dependencies:
+      '@kr8tiv/accountability':
+        specifier: workspace:*
+        version: link:../packages/accountability
       '@kr8tiv/config':
         specifier: workspace:*
         version: link:../packages/config
@@ -374,6 +403,9 @@ importers:
       '@kr8tiv/signal-engine':
         specifier: workspace:*
         version: link:../packages/signal-engine
+      '@kr8tiv/style-engine':
+        specifier: workspace:*
+        version: link:../packages/style-engine
     devDependencies:
       '@types/node':
         specifier: ^22

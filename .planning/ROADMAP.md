@@ -7,6 +7,8 @@
 **v1 Scope (weekend target):** Phases 1-5 — ends with first live ETH spot trade approved via Telegram + first computable leak report.
 **v2 Scope (post-weekend iteration):** Phases 6-10 — futures write, news/on-chain, ML, dashboards, VPS failover.
 
+**2026-04-23 Product Direction Addendum:** See `docs/plans/2026-04-23-futures-accountability-product-direction.md`. The intelligence and coaching layer is now explicitly **futures-first on BTCUSDT / ETHUSDT / SOLUSDT**, with a local accountability/journal app planned as a core product surface. Spot execution remains the currently-safe live path, but the product's coaching brain should optimize for futures behavior, leverage discipline, and journal-backed accountability.
+
 ## Phases
 
 - [x] **Phase 1: Foundation** — Scaffold + secrets + MEXC read access with two-client separation — 6/6 plans closed; readiness doc signed 2026-04-18 by Matt-Aurora-Ventures (commit `a0cdc24`); live creds-dependent verifications (pnpm smoke exit 0, MEXC_LIVE=1 suites) deferred until `pnpm setup:credentials` runs — documented in signed doc §3

@@ -6,7 +6,11 @@
  * - Plan 03-xx: Telegram approval-loop payloads and status responses
  * - Plan 04-xx: trade history + style fingerprint schemas
  */
+export * from "./accountability.js";
 export * from "./mexc.js";
+export * from "./history.js";
+export * from "./market.js";
+export * from "./risk.js";
 export * from "./signal-watch.js";
 export * from "./signals.js";
 export * from "./telegram.js";

@@ -43,6 +43,31 @@ CREATE TABLE IF NOT EXISTS realized_pnl (
 );
 CREATE INDEX IF NOT EXISTS realized_pnl_closed_at ON realized_pnl(closed_at_ms);
 
+CREATE TABLE IF NOT EXISTS trades (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  venue TEXT NOT NULL,
+  market TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+  price REAL NOT NULL,
+  size REAL NOT NULL,
+  quote_notional REAL NOT NULL,
+  fee REAL NOT NULL DEFAULT 0,
+  fee_currency TEXT NOT NULL DEFAULT 'USDT',
+  executed_at_ms INTEGER NOT NULL,
+  source_trade_id TEXT NOT NULL,
+  source_order_id TEXT,
+  leverage REAL,
+  risk_mode TEXT CHECK (risk_mode IS NULL OR risk_mode IN ('sniper', 'core')),
+  thesis TEXT,
+  journal_note TEXT,
+  raw_response TEXT,
+  imported_at_ms INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+  UNIQUE (venue, market, source_trade_id)
+);
+CREATE INDEX IF NOT EXISTS trades_symbol_executed_at ON trades(symbol, executed_at_ms);
+CREATE INDEX IF NOT EXISTS trades_market_executed_at ON trades(market, executed_at_ms);
+
 CREATE TABLE IF NOT EXISTS executor_state (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,

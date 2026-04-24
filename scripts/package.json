@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@kr8tiv/accountability": "workspace:*",
     "@kr8tiv/config": "workspace:*",
     "@kr8tiv/db": "workspace:*",
     "@kr8tiv/executor": "workspace:*",
@@ -13,8 +14,9 @@
     "@kr8tiv/redis-client": "workspace:*",
     "@kr8tiv/secrets": "workspace:*",
     "@kr8tiv/shared-schemas": "workspace:*",
+    "@kr8tiv/shared-types": "workspace:*",
     "@kr8tiv/signal-engine": "workspace:*",
-    "@kr8tiv/shared-types": "workspace:*"
+    "@kr8tiv/style-engine": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22",

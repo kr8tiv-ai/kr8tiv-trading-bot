@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { closeDatabase, openDatabase } from "@kr8tiv/db";
+import { applySchema } from "@kr8tiv/executor";
 import {
   FUTURES_KLINE_INTERVAL_MS,
   MEXCFuturesClient,
@@ -7,8 +9,18 @@ import {
   type FuturesKlineInterval,
 } from "@kr8tiv/mexc-futures";
 import { analyzeMarket, type AnalyzeMarketInput } from "@kr8tiv/signal-engine";
+import {
+  buildStyleConflicts,
+  buildStyleFingerprint,
+  reconstructTrades,
+} from "@kr8tiv/style-engine";
 import { createLogger } from "@kr8tiv/logger";
-import { type MarketScan } from "@kr8tiv/shared-schemas";
+import {
+  ImportedTradeSchema,
+  type ImportedTrade,
+  type MarketScan,
+  type StyleFingerprint,
+} from "@kr8tiv/shared-schemas";
 import type { SecretProvider } from "@kr8tiv/secrets";
 
 const log = createLogger().child({ service: "signals-scan" });
@@ -19,6 +31,8 @@ export type ScanOptions = {
   shortInterval: FuturesKlineInterval;
   longInterval: FuturesKlineInterval;
   limit: number;
+  style: boolean;
+  proposedNotionalQuote?: number;
 };
 
 export const publicOnlyProvider: SecretProvider = {
@@ -58,12 +72,24 @@ export function parseScanArgs(argv: string[]): ScanOptions {
     shortInterval: "Min15",
     longInterval: "Hour4",
     limit: 160,
+    style: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--json") {
       options.json = true;
+      continue;
+    }
+    if (arg === "--style") {
+      options.style = true;
+      continue;
+    }
+    if (arg === "--notional") {
+      const value = Number(argv[i + 1]);
+      if (!Number.isFinite(value) || value <= 0) usage();
+      options.proposedNotionalQuote = value;
+      i += 1;
       continue;
     }
     if (arg === "--symbols") {
@@ -151,6 +177,11 @@ export function formatScan(scan: MarketScan): string {
           `targets ${idea.targets.map((target) => target.toFixed(4)).join(", ")}`,
       );
       lines.push(`  thesis: ${idea.thesis}`);
+      if (idea.conflictsWithStyle && idea.conflictsWithStyle.length > 0) {
+        for (const conflict of idea.conflictsWithStyle) {
+          lines.push(`  style ${conflict.severity}: ${conflict.message}`);
+        }
+      }
     }
   }
 
@@ -197,10 +228,82 @@ export async function scanSymbols(
   );
 }
 
+function readImportedTrades(symbols: string[]): ImportedTrade[] {
+  const db = openDatabase();
+  try {
+    applySchema(db);
+    const rows = db
+      .prepare(
+        `SELECT
+          venue,
+          market,
+          symbol,
+          side,
+          price,
+          size,
+          quote_notional AS quoteNotional,
+          fee,
+          fee_currency AS feeCurrency,
+          executed_at_ms AS executedAtMs,
+          source_trade_id AS sourceTradeId,
+          source_order_id AS sourceOrderId,
+          leverage,
+          risk_mode AS riskMode,
+          thesis,
+          journal_note AS journalNote,
+          raw_response AS rawResponse
+        FROM trades
+        WHERE symbol IN (${symbols.map(() => "?").join(",")})
+        ORDER BY executed_at_ms ASC`,
+      )
+      .all(...symbols);
+    return ImportedTradeSchema.array().parse(rows);
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+export function annotateScansWithStyle(
+  scans: MarketScan[],
+  fingerprints: StyleFingerprint[],
+  proposedNotionalQuote?: number,
+): MarketScan[] {
+  const bySymbol = new Map(
+    fingerprints.map((fingerprint) => [fingerprint.symbol, fingerprint]),
+  );
+  const generatedAtMs = Date.now();
+
+  return scans.map((scan) => ({
+    ...scan,
+    ideas: scan.ideas.map((idea) => ({
+      ...idea,
+      conflictsWithStyle: buildStyleConflicts(
+        proposedNotionalQuote === undefined
+          ? { symbol: scan.symbol, generatedAtMs }
+          : { symbol: scan.symbol, generatedAtMs, proposedNotionalQuote },
+        bySymbol.get(scan.symbol),
+      ),
+    })),
+  }));
+}
+
 async function main(): Promise<void> {
   const options = parseScanArgs(process.argv.slice(2));
   const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
-  const scans = await scanSymbols(client, options);
+  let scans = await scanSymbols(client, options);
+
+  if (options.style) {
+    const imported = readImportedTrades(options.symbols);
+    const closed = reconstructTrades(imported);
+    const fingerprints = options.symbols.map((symbol) =>
+      buildStyleFingerprint(symbol, closed),
+    );
+    scans = annotateScansWithStyle(
+      scans,
+      fingerprints,
+      options.proposedNotionalQuote,
+    );
+  }
 
   if (options.json) {
     process.stdout.write(`${JSON.stringify(scans, null, 2)}\n`);
