@@ -24,6 +24,7 @@
     "place-order": "tsx apps/core/src/place-order.ts",
     "signals:scan": "tsx scripts/scan-signals.ts",
     "signals:watch": "tsx scripts/watch-signals.ts",
+    "model:scan": "tsx scripts/model-scan.ts",
     "history:ingest": "tsx scripts/history-ingest.ts",
     "style:fingerprint": "tsx scripts/style-fingerprint.ts",
     "trade:review": "tsx scripts/trade-review.ts",
