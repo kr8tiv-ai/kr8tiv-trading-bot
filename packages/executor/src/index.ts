@@ -40,10 +40,17 @@ export {
   writeSubmitted,
 } from "./ledger.js";
 export {
+  findTradeJournalEntry,
   listRecentTradeJournalEntries,
+  recordApprovalDecision,
+  recordTelegramDispatch,
   saveTradeJournalEntry,
 } from "./journal.js";
-export type { TradeJournalEntry } from "./journal.js";
+export type {
+  SaveTradeJournalOptions,
+  TradeJournalApprovalStatus,
+  TradeJournalEntry,
+} from "./journal.js";
 export { panic } from "./panic.js";
 export {
   buildApprovalHandler,

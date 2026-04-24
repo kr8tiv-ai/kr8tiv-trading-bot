@@ -406,6 +406,12 @@ importers:
       '@kr8tiv/style-engine':
         specifier: workspace:*
         version: link:../packages/style-engine
+      '@kr8tiv/telegram-bot':
+        specifier: workspace:*
+        version: link:../packages/telegram-bot
+      grammy:
+        specifier: ^1.38.3
+        version: 1.42.0
     devDependencies:
       '@types/node':
         specifier: ^22

@@ -16,7 +16,9 @@
     "@kr8tiv/shared-schemas": "workspace:*",
     "@kr8tiv/shared-types": "workspace:*",
     "@kr8tiv/signal-engine": "workspace:*",
-    "@kr8tiv/style-engine": "workspace:*"
+    "@kr8tiv/style-engine": "workspace:*",
+    "@kr8tiv/telegram-bot": "workspace:*",
+    "grammy": "^1.38.3"
   },
   "devDependencies": {
     "@types/node": "^22",

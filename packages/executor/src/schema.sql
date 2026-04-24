@@ -89,9 +89,21 @@ CREATE TABLE IF NOT EXISTS trade_journal (
   risk_reward_ratio REAL NOT NULL,
   blocks_json TEXT NOT NULL,
   warnings_json TEXT NOT NULL,
-  generated_from_signal_id TEXT
+  generated_from_signal_id TEXT,
+  -- MVP 2026-04-24: style conflicts + semi-auto Telegram approval trail.
+  -- See packages/executor/src/schema.ts `applyTradeJournalMigrations`
+  -- for the ALTER-TABLE-ADD-COLUMN migrator that brings pre-existing
+  -- databases (journal rows 1..N before this column set) forward.
+  conflicts_json TEXT NOT NULL DEFAULT '[]',
+  telegram_message_id INTEGER,
+  telegram_chat_id INTEGER,
+  approval_status TEXT CHECK (approval_status IS NULL OR approval_status IN ('pending','approved','rejected','expired')),
+  approved_at_ms INTEGER,
+  rejected_at_ms INTEGER
 );
 CREATE INDEX IF NOT EXISTS trade_journal_symbol_created_at ON trade_journal(symbol, created_at_ms);
+-- trade_journal_approval_status index is created by schema.ts AFTER the
+-- migrator adds the `approval_status` column on pre-MVP databases.
 
 CREATE TABLE IF NOT EXISTS executor_state (
   key TEXT PRIMARY KEY,
