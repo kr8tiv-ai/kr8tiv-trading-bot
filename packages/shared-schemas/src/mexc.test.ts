@@ -4,7 +4,9 @@ import {
   MexcCancelResponseSchema,
   MexcExchangeInfoSchema,
   MexcFillSchema,
+  MexcFuturesAccountSnapshotSchema,
   MexcFuturesPingSchema,
+  MexcFuturesPositionSchema,
   MexcOrderResponseSchema,
   MexcPingResponseSchema,
   MexcSpotTimeSchema,
@@ -66,6 +68,65 @@ describe("MexcBalanceResponseSchema", () => {
   });
   it("rejects when total/free/used are missing", () => {
     expect(() => MexcBalanceResponseSchema.parse({ info: {} })).toThrow();
+  });
+});
+
+describe("MexcFuturesPositionSchema", () => {
+  it("parses a normalized MEXC futures long position", () => {
+    const parsed = MexcFuturesPositionSchema.parse({
+      symbol: "BTCUSDT",
+      side: "long",
+      contracts: 0.01,
+      notionalQuote: 775,
+      entryPrice: 77000,
+      markPrice: 77500,
+      unrealizedPnl: 5,
+      leverage: 50,
+      liquidationPrice: 72000,
+      marginMode: "isolated",
+      rawResponse: "{}",
+    });
+    expect(parsed.symbol).toBe("BTCUSDT");
+    expect(parsed.side).toBe("long");
+    expect(parsed.leverage).toBe(50);
+  });
+
+  it("rejects unsupported futures symbols", () => {
+    expect(() =>
+      MexcFuturesPositionSchema.parse({
+        symbol: "DOGEUSDT",
+        side: "long",
+        contracts: 1,
+        notionalQuote: 10,
+        entryPrice: 1,
+        markPrice: 1,
+        unrealizedPnl: 0,
+        leverage: 10,
+      }),
+    ).toThrow();
+  });
+});
+
+describe("MexcFuturesAccountSnapshotSchema", () => {
+  it("parses USDT margin balance and positions", () => {
+    const parsed = MexcFuturesAccountSnapshotSchema.parse({
+      usdt: { total: 100, free: 80, used: 20 },
+      positions: [
+        {
+          symbol: "ETHUSDT",
+          side: "short",
+          contracts: 0.25,
+          notionalQuote: 600,
+          entryPrice: 2400,
+          markPrice: 2380,
+          unrealizedPnl: 5,
+          leverage: 30,
+        },
+      ],
+      fetchedAtMs: 1_700_000_000_000,
+    });
+    expect(parsed.usdt.free).toBe(80);
+    expect(parsed.positions[0]?.symbol).toBe("ETHUSDT");
   });
 });
 

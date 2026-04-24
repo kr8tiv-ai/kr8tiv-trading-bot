@@ -66,6 +66,7 @@ The local app and CLI should support this loop:
 pnpm signals:scan --style --symbols 'BTCUSDT,ETHUSDT,SOLUSDT'
 pnpm signals:watch --symbols 'BTCUSDT,ETHUSDT,SOLUSDT'
 pnpm model:scan --symbols 'BTCUSDT,ETHUSDT,SOLUSDT' --notional 12
+pnpm futures:status # requires mexc-futures-access + mexc-futures-secret WCM entries
 pnpm trade:review --symbol BTCUSDT --side long --horizon scalp --mode sniper --leverage 75 --margin 12 --entry 93500 --stop 93140 --target 94400 --why "15m reclaim with momentum confirmation after liquidity sweep" --note "planned, not revenge"
 pnpm trade:journal --symbol BTCUSDT --side long --horizon scalp --mode sniper --leverage 75 --margin 12 --entry 93500 --stop 93140 --target 94400 --why "15m reclaim with momentum confirmation after liquidity sweep" --note "planned, not revenge"
 pnpm trade:app

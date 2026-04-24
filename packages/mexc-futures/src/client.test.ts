@@ -6,6 +6,8 @@ import type { SecretName, Secret } from "@kr8tiv/shared-types";
 
 type ExchangeMock = {
   fetchMyTrades?: (...args: unknown[]) => unknown;
+  fetchBalance?: (...args: unknown[]) => unknown;
+  fetchPositions?: (...args: unknown[]) => unknown;
 };
 
 function mockProvider(has: Partial<Record<SecretName, string>> = {}): SecretProvider {
@@ -233,5 +235,62 @@ describe("MEXCFuturesClient.fetchMyTradesPage (read-only futures history)", () =
     ).rejects.toThrow(/unsupported futures symbol/i);
 
     expect(fetchMyTrades).not.toHaveBeenCalled();
+  });
+});
+
+describe("MEXCFuturesClient.fetchAccountSnapshot (read-only futures exposure)", () => {
+  it("normalizes USDT balance and BTC/ETH/SOL futures positions", async () => {
+    const fetchBalance = vi.fn().mockResolvedValue({
+      info: {},
+      total: { USDT: 100 },
+      free: { USDT: 80 },
+      used: { USDT: 20 },
+    });
+    const fetchPositions = vi.fn().mockResolvedValue([
+      {
+        symbol: "BTC/USDT:USDT",
+        side: "long",
+        contracts: 0.01,
+        notional: 775,
+        entryPrice: 77000,
+        markPrice: 77500,
+        unrealizedPnl: 5,
+        leverage: 50,
+        liquidationPrice: 72000,
+        marginMode: "isolated",
+        info: { raw: "btc" },
+      },
+      {
+        symbol: "DOGE/USDT:USDT",
+        side: "long",
+        contracts: 100,
+        notional: 10,
+      },
+    ]);
+    const client = makeStubClient({ fetchBalance, fetchPositions });
+
+    const snapshot = await client.fetchAccountSnapshot();
+
+    expect(fetchBalance).toHaveBeenCalledWith({ type: "swap" });
+    expect(fetchPositions).toHaveBeenCalledWith(
+      ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"],
+      { type: "swap" },
+    );
+    expect(snapshot.usdt).toEqual({ total: 100, free: 80, used: 20 });
+    expect(snapshot.positions).toEqual([
+      {
+        symbol: "BTCUSDT",
+        side: "long",
+        contracts: 0.01,
+        notionalQuote: 775,
+        entryPrice: 77000,
+        markPrice: 77500,
+        unrealizedPnl: 5,
+        leverage: 50,
+        liquidationPrice: 72000,
+        marginMode: "isolated",
+        rawResponse: JSON.stringify({ raw: "btc" }),
+      },
+    ]);
   });
 });

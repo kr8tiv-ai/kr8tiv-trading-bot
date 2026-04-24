@@ -4,11 +4,14 @@ import { unsafeReveal, type SecretProvider } from "@kr8tiv/secrets";
 import {
   MarketCandleSchema,
   ImportedTradeSchema,
+  MexcBalanceResponseSchema,
+  MexcFuturesAccountSnapshotSchema,
   MexcFuturesKlineResponseSchema,
   MexcFuturesPingSchema,
   MexcPingResponseSchema,
   type ImportedTrade,
   type MarketCandle,
+  type MexcFuturesAccountSnapshot,
 } from "@kr8tiv/shared-schemas";
 
 export interface MEXCFuturesClientConfig {
@@ -64,6 +67,16 @@ function toCcxtSwapSymbol(symbol: FetchFuturesTradesPageParams["symbol"]): strin
     throw new Error(`unsupported futures symbol: ${symbol}`);
   }
   return symbol.replace("USDT", "/USDT:USDT");
+}
+
+function fromCcxtSwapSymbol(symbol: unknown): SupportedFuturesSignalSymbol | null {
+  if (typeof symbol !== "string") return null;
+  const normalized = symbol.replace("/USDT:USDT", "USDT");
+  return SUPPORTED_FUTURES_SIGNAL_SYMBOLS.includes(
+    normalized as SupportedFuturesSignalSymbol,
+  )
+    ? (normalized as SupportedFuturesSignalSymbol)
+    : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -280,6 +293,58 @@ export class MEXCFuturesClient {
     });
 
     return ImportedTradeSchema.array().parse(rows);
+  }
+
+  /**
+   * Read-only authenticated futures account snapshot for live-time coaching.
+   * Normalizes USDT margin balance and currently-open BTC/ETH/SOL positions.
+   * This is deliberately observational; no futures write methods are unlocked.
+   */
+  async fetchAccountSnapshot(): Promise<MexcFuturesAccountSnapshot> {
+    const [rawBalance, rawPositions] = await Promise.all([
+      this.exchange.fetchBalance({ type: "swap" }),
+      // CCXT's Exchange type can lag exchange-specific support; MEXC swap has it.
+      (this.exchange as unknown as {
+        fetchPositions: (symbols?: string[], params?: unknown) => Promise<unknown[]>;
+      }).fetchPositions(
+        SUPPORTED_FUTURES_SIGNAL_SYMBOLS.map((symbol) => toCcxtSwapSymbol(symbol)),
+        { type: "swap" },
+      ),
+    ]);
+
+    const balance = MexcBalanceResponseSchema.parse(rawBalance);
+    const positions = rawPositions.flatMap((item) => {
+      const position = asRecord(item);
+      const symbol = fromCcxtSwapSymbol(position.symbol);
+      if (symbol === null) return [];
+      const contracts = asNumber(position.contracts);
+      if (contracts <= 0) return [];
+      const info = asRecord(position.info);
+      const side = asString(position.side).toLowerCase();
+      return {
+        symbol,
+        side: side === "short" ? "short" : "long",
+        contracts,
+        notionalQuote: asNumber(position.notional),
+        entryPrice: asNumber(position.entryPrice),
+        markPrice: asNumber(position.markPrice),
+        unrealizedPnl: asNumber(position.unrealizedPnl),
+        leverage: asNumber(position.leverage),
+        liquidationPrice: asNumber(position.liquidationPrice),
+        marginMode: asString(position.marginMode) || undefined,
+        rawResponse: JSON.stringify(Object.keys(info).length > 0 ? info : position),
+      };
+    });
+
+    return MexcFuturesAccountSnapshotSchema.parse({
+      usdt: {
+        total: asNumber(balance.total.USDT),
+        free: asNumber(balance.free.USDT),
+        used: asNumber(balance.used.USDT),
+      },
+      positions,
+      fetchedAtMs: Date.now(),
+    });
   }
 
   // NO order-placement methods here. Phase 6 adds placeFuturesOrder etc.

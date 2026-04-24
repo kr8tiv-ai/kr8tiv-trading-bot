@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AccountableSymbolSchema } from "./risk.js";
 
 /**
  * GET /api/v3/time (MEXC spot)
@@ -112,6 +113,34 @@ export const MexcBalanceResponseSchema = z.object({
   used: z.record(z.string(), z.number()),
 });
 export type AccountInfo = z.infer<typeof MexcBalanceResponseSchema>;
+
+export const MexcFuturesPositionSchema = z.object({
+  symbol: AccountableSymbolSchema,
+  side: z.enum(["long", "short", "flat"]),
+  contracts: z.number().nonnegative(),
+  notionalQuote: z.number().nonnegative(),
+  entryPrice: z.number().nonnegative(),
+  markPrice: z.number().nonnegative(),
+  unrealizedPnl: z.number(),
+  leverage: z.number().nonnegative(),
+  liquidationPrice: z.number().nonnegative().optional(),
+  marginMode: z.string().min(1).optional(),
+  rawResponse: z.string().optional(),
+});
+export type MexcFuturesPosition = z.infer<typeof MexcFuturesPositionSchema>;
+
+export const MexcFuturesAccountSnapshotSchema = z.object({
+  usdt: z.object({
+    total: z.number().nonnegative(),
+    free: z.number().nonnegative(),
+    used: z.number().nonnegative(),
+  }),
+  positions: z.array(MexcFuturesPositionSchema),
+  fetchedAtMs: z.number().int().positive(),
+});
+export type MexcFuturesAccountSnapshot = z.infer<
+  typeof MexcFuturesAccountSnapshotSchema
+>;
 
 // ---------------------------------------------------------------------------
 // Phase 2 additions — order / cancel / fill / exchangeInfo response shapes.
