@@ -27,6 +27,7 @@
     "history:ingest": "tsx scripts/history-ingest.ts",
     "style:fingerprint": "tsx scripts/style-fingerprint.ts",
     "trade:review": "tsx scripts/trade-review.ts",
+    "trade:journal": "tsx scripts/trade-review.ts --save",
     "lefthook:install": "pnpm exec lefthook install"
   },
   "devDependencies": {

@@ -1,5 +1,8 @@
 import { reviewTradePlan } from "@kr8tiv/accountability";
+import { closeDatabase, openDatabase } from "@kr8tiv/db";
+import { applySchema } from "@kr8tiv/executor";
 import { AccountableTradePlanSchema } from "@kr8tiv/shared-schemas";
+import type { AccountableTradePlan, AccountabilityCheck } from "@kr8tiv/shared-schemas";
 
 type RawArgs = Record<string, string | boolean>;
 
@@ -45,6 +48,44 @@ function numberArg(args: RawArgs, key: string): number {
   return value;
 }
 
+function saveJournalEntry(
+  plan: AccountableTradePlan,
+  review: AccountabilityCheck,
+): number {
+  const db = openDatabase();
+  try {
+    applySchema(db);
+    const result = db
+      .prepare(
+        `INSERT INTO trade_journal (
+          created_at_ms, symbol, market, direction, horizon, risk_mode, leverage,
+          margin_quote, entry_price, stop_loss_price, take_profit_price, thesis,
+          journal_note, ok_to_proceed, estimated_loss_quote, estimated_reward_quote,
+          risk_reward_ratio, blocks_json, warnings_json, generated_from_signal_id
+        ) VALUES (
+          @createdAtMs, @symbol, @market, @direction, @horizon, @riskMode, @leverage,
+          @marginQuote, @entryPrice, @stopLossPrice, @takeProfitPrice, @thesis,
+          @journalNote, @okToProceed, @estimatedLossQuote, @estimatedRewardQuote,
+          @riskRewardRatio, @blocksJson, @warningsJson, @generatedFromSignalId
+        )`,
+      )
+      .run({
+        ...plan,
+        createdAtMs: plan.createdAtMs ?? Date.now(),
+        okToProceed: review.okToProceed ? 1 : 0,
+        estimatedLossQuote: review.estimatedLossQuote,
+        estimatedRewardQuote: review.estimatedRewardQuote,
+        riskRewardRatio: review.riskRewardRatio,
+        blocksJson: JSON.stringify(review.blocks),
+        warningsJson: JSON.stringify(review.warnings),
+        generatedFromSignalId: plan.generatedFromSignalId ?? null,
+      });
+    return Number(result.lastInsertRowid);
+  } finally {
+    closeDatabase(db);
+  }
+}
+
 function main(): void {
   const args = parseRaw(process.argv.slice(2));
   const plan = AccountableTradePlanSchema.parse({
@@ -64,6 +105,7 @@ function main(): void {
   });
 
   const review = reviewTradePlan(plan);
+  const savedId = args.save === true ? saveJournalEntry(plan, review) : null;
   const verdict = review.okToProceed ? "OK TO PLAN" : "BLOCKED";
   const lines = [
     `${verdict}: ${plan.symbol} ${plan.direction} ${plan.leverage}x ${plan.riskMode}`,
@@ -82,6 +124,9 @@ function main(): void {
   lines.push("journal:");
   lines.push(`- why: ${plan.thesis}`);
   lines.push(`- note: ${plan.journalNote}`);
+  if (savedId !== null) {
+    lines.push(`saved: trade_journal#${savedId}`);
+  }
 
   process.stdout.write(`${lines.join("\n")}\n`);
   process.exit(review.okToProceed ? 0 : 2);

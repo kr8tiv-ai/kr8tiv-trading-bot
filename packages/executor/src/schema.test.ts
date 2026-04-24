@@ -25,7 +25,7 @@ describe("applySchema", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates all 4 tables + positions view on first apply", () => {
+  it("creates executor, history, and journal tables + positions view on first apply", () => {
     applySchema(db);
     const objs = db
       .prepare(
@@ -36,6 +36,8 @@ describe("applySchema", () => {
     expect(names).toContain("orders");
     expect(names).toContain("fills");
     expect(names).toContain("realized_pnl");
+    expect(names).toContain("trades");
+    expect(names).toContain("trade_journal");
     expect(names).toContain("executor_state");
     expect(names).toContain("positions");
     const positionsType = objs.find((o) => o.name === "positions")?.type;
@@ -48,10 +50,10 @@ describe("applySchema", () => {
     applySchema(db);
     const count = db
       .prepare(
-        "SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name IN ('orders','fills','realized_pnl','executor_state')",
+        "SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name IN ('orders','fills','realized_pnl','trades','trade_journal','executor_state')",
       )
       .get() as { c: number };
-    expect(count.c).toBe(4);
+    expect(count.c).toBe(6);
   });
 
   it("enforces orders.side CHECK constraint", () => {
@@ -80,8 +82,62 @@ describe("applySchema", () => {
     expect(SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS orders");
     expect(SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS fills");
     expect(SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS realized_pnl");
+    expect(SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS trades");
+    expect(SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS trade_journal");
     expect(SCHEMA_SQL).toContain("CREATE TABLE IF NOT EXISTS executor_state");
     expect(SCHEMA_SQL).toContain("CREATE VIEW IF NOT EXISTS positions");
+  });
+
+  it("roundtrips a trade_journal row with accountability verdict fields", () => {
+    applySchema(db);
+    db.prepare(
+      `INSERT INTO trade_journal (
+        created_at_ms, symbol, market, direction, horizon, risk_mode, leverage,
+        margin_quote, entry_price, stop_loss_price, take_profit_price, thesis,
+        journal_note, ok_to_proceed, estimated_loss_quote, estimated_reward_quote,
+        risk_reward_ratio, blocks_json, warnings_json
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      1700000000000,
+      "BTCUSDT",
+      "mexc-futures",
+      "long",
+      "scalp",
+      "sniper",
+      75,
+      12,
+      93500,
+      93140,
+      94400,
+      "15m reclaim after sweep",
+      "planned, not revenge",
+      1,
+      3.47,
+      8.66,
+      2.5,
+      "[]",
+      '[{"code":"high_leverage"}]',
+    );
+    const row = db
+      .prepare(
+        "SELECT symbol, direction, risk_mode, leverage, ok_to_proceed, risk_reward_ratio FROM trade_journal WHERE symbol = ?",
+      )
+      .get("BTCUSDT") as {
+      symbol: string;
+      direction: string;
+      risk_mode: string;
+      leverage: number;
+      ok_to_proceed: number;
+      risk_reward_ratio: number;
+    };
+    expect(row).toEqual({
+      symbol: "BTCUSDT",
+      direction: "long",
+      risk_mode: "sniper",
+      leverage: 75,
+      ok_to_proceed: 1,
+      risk_reward_ratio: 2.5,
+    });
   });
 
   it("roundtrips an orders row end-to-end", () => {

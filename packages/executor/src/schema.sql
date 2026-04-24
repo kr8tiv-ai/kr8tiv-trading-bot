@@ -68,6 +68,31 @@ CREATE TABLE IF NOT EXISTS trades (
 CREATE INDEX IF NOT EXISTS trades_symbol_executed_at ON trades(symbol, executed_at_ms);
 CREATE INDEX IF NOT EXISTS trades_market_executed_at ON trades(market, executed_at_ms);
 
+CREATE TABLE IF NOT EXISTS trade_journal (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at_ms INTEGER NOT NULL,
+  symbol TEXT NOT NULL,
+  market TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK (direction IN ('long', 'short')),
+  horizon TEXT NOT NULL CHECK (horizon IN ('scalp', 'swing')),
+  risk_mode TEXT NOT NULL CHECK (risk_mode IN ('sniper', 'core')),
+  leverage REAL NOT NULL,
+  margin_quote REAL NOT NULL,
+  entry_price REAL NOT NULL,
+  stop_loss_price REAL NOT NULL,
+  take_profit_price REAL NOT NULL,
+  thesis TEXT NOT NULL,
+  journal_note TEXT NOT NULL,
+  ok_to_proceed INTEGER NOT NULL CHECK (ok_to_proceed IN (0, 1)),
+  estimated_loss_quote REAL NOT NULL,
+  estimated_reward_quote REAL NOT NULL,
+  risk_reward_ratio REAL NOT NULL,
+  blocks_json TEXT NOT NULL,
+  warnings_json TEXT NOT NULL,
+  generated_from_signal_id TEXT
+);
+CREATE INDEX IF NOT EXISTS trade_journal_symbol_created_at ON trade_journal(symbol, created_at_ms);
+
 CREATE TABLE IF NOT EXISTS executor_state (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
