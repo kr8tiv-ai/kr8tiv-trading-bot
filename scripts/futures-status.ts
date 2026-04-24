@@ -1,6 +1,5 @@
 import { createLogger } from "@kr8tiv/logger";
-import { MEXCFuturesClient } from "@kr8tiv/mexc-futures";
-import { WindowsCredentialManagerProvider } from "@kr8tiv/secrets";
+import { readFuturesAccountStatus } from "./futures-account-status.js";
 
 const log = createLogger().child({ service: "futures-status" });
 
@@ -10,20 +9,9 @@ function formatNumber(value: number, decimals = 4): string {
 
 async function main(): Promise<void> {
   const json = process.argv.includes("--json");
-  const secrets = new WindowsCredentialManagerProvider();
-  const [hasAccess, hasSecret] = await Promise.all([
-    secrets.has("mexc-futures-access"),
-    secrets.has("mexc-futures-secret"),
-  ]);
-  if (!hasAccess || !hasSecret) {
-    throw new Error(
-      "Missing futures credentials in Windows Credential Manager: mexc-futures-access and/or mexc-futures-secret. Add read-only futures API credentials before using pnpm futures:status.",
-    );
-  }
-  const client = await MEXCFuturesClient.create({
-    secrets,
-  });
-  const snapshot = await client.fetchAccountSnapshot();
+  const status = await readFuturesAccountStatus();
+  if (!status.available) throw new Error(status.message);
+  const { snapshot } = status;
 
   if (json) {
     process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
