@@ -6,11 +6,15 @@ import {
   saveTradeJournalEntry,
   type TradeJournalEntry,
 } from "@kr8tiv/executor";
+import { MEXCFuturesClient } from "@kr8tiv/mexc-futures";
+import { buildTradePlansFromScan } from "@kr8tiv/signal-engine";
 import {
   AccountableTradePlanSchema,
   type AccountabilityCheck,
   type AccountableTradePlan,
+  type MarketScan,
 } from "@kr8tiv/shared-schemas";
+import { publicOnlyProvider, scanSymbols } from "./scan-signals.js";
 
 const HOST = process.env.TRADER_APP_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.TRADER_APP_PORT ?? 3020);
@@ -20,6 +24,12 @@ type ApiReviewResponse = {
   plan: AccountableTradePlan;
   review: AccountabilityCheck;
   savedId: number | null;
+};
+
+type ApiModelPlan = {
+  scan: Pick<MarketScan, "symbol" | "regime" | "currentPrice" | "warnings">;
+  plan: AccountableTradePlan;
+  review: AccountabilityCheck;
 };
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -93,6 +103,40 @@ function handleReview(body: unknown, save: boolean): ApiReviewResponse {
   return { plan, review, savedId };
 }
 
+async function handleModelScan(url: URL): Promise<{
+  scans: MarketScan[];
+  plans: ApiModelPlan[];
+}> {
+  const requestedNotional = Number(url.searchParams.get("notional") ?? "12");
+  const marginQuote =
+    Number.isFinite(requestedNotional) && requestedNotional > 0
+      ? requestedNotional
+      : 12;
+  const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
+  const scans = await scanSymbols(client, {
+    json: true,
+    symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+    shortInterval: "Min15",
+    longInterval: "Hour4",
+    limit: 120,
+    style: false,
+    proposedNotionalQuote: marginQuote,
+  });
+  const plans = scans.flatMap((scan) =>
+    buildTradePlansFromScan(scan, { marginQuote }).map((plan) => ({
+      scan: {
+        symbol: scan.symbol,
+        regime: scan.regime,
+        currentPrice: scan.currentPrice,
+        warnings: scan.warnings,
+      },
+      plan,
+      review: reviewTradePlan(plan),
+    })),
+  );
+  return { scans, plans };
+}
+
 async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${HOST}:${PORT}`);
 
@@ -108,6 +152,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 
   if (req.method === "GET" && url.pathname === "/api/journal") {
     json(res, 200, { entries: listJournal() });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/model-scan") {
+    try {
+      json(res, 200, await handleModelScan(url));
+    } catch (err) {
+      json(res, 500, {
+        error: "model_scan_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
     return;
   }
 
@@ -244,6 +300,11 @@ function renderApp(): string {
       display: grid;
       gap: 12px;
     }
+    .scan-button {
+      width: 100%;
+      justify-content: center;
+      margin-top: 4px;
+    }
     .mode {
       border: 1px solid var(--line);
       border-radius: 20px;
@@ -365,6 +426,18 @@ function renderApp(): string {
     .pill.ok { color: var(--green); border-color: rgba(148, 255, 152, 0.35); }
     .pill.block { color: var(--red); border-color: rgba(255, 107, 107, 0.35); }
     .entry p { margin: 8px 0 0; color: var(--muted); line-height: 1.45; font-size: 13px; }
+    .model-panel {
+      margin-top: 18px;
+      border-top: 1px solid var(--line);
+      padding-top: 18px;
+    }
+    .model-panel h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--muted);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
     .empty {
       color: var(--muted);
       border: 1px dashed var(--line);
@@ -401,6 +474,7 @@ function renderApp(): string {
           <div class="mode"><strong>Sniper</strong><span>30x-100x, small margin, tight invalidation, fast review. Built for risky snipes without letting size drift.</span></div>
           <div class="mode"><strong>Core</strong><span>Higher capital, 30x max, cleaner thesis, better R/R. Built for trades that deserve patience.</span></div>
         </div>
+        <button id="scan-model" class="scan-button">Scan live BTC/ETH/SOL model</button>
       </aside>
     </section>
 
@@ -466,6 +540,10 @@ function renderApp(): string {
           <h3>Waiting for a plan</h3>
           <p class="lede">Fill the trade, then make the bot argue with you before you size it.</p>
         </div>
+        <div class="model-panel">
+          <h3>Live model drafts</h3>
+          <div id="model-output" class="journal"><div class="empty">Run the live model scan to pull MEXC futures structure.</div></div>
+        </div>
       </div>
 
       <aside class="plate card">
@@ -479,6 +557,8 @@ function renderApp(): string {
     const form = document.querySelector("#trade-form");
     const verdictEl = document.querySelector("#verdict");
     const journalEl = document.querySelector("#journal");
+    const modelEl = document.querySelector("#model-output");
+    const scanModelButton = document.querySelector("#scan-model");
     let saveNext = false;
 
     function num(value) {
@@ -534,6 +614,27 @@ function renderApp(): string {
       }).join("");
     }
 
+    function renderModel(data) {
+      if (!data.plans.length) {
+        modelEl.innerHTML =
+          "<div class='empty'>No accountable trade plan right now. That is a signal too: wait for cleaner BTC/ETH/SOL structure.</div>" +
+          data.scans.map((s) => "<article class='entry'><div class='entry-head'><strong>" + s.symbol + "</strong><span class='pill'>" + s.regime + "</span></div><p>Price " + s.currentPrice + " | Ideas: " + s.ideas.length + "</p></article>").join("");
+        return;
+      }
+      modelEl.innerHTML = data.plans.map((item) => {
+        const p = item.plan;
+        const r = item.review;
+        return "<article class='entry'>" +
+          "<div class='entry-head'><strong>" + p.symbol + " " + p.direction.toUpperCase() + " " + p.leverage + "x</strong>" +
+          "<span class='pill " + (r.okToProceed ? "ok" : "block") + "'>" + (r.okToProceed ? "OK" : "BLOCKED") + "</span></div>" +
+          "<span class='pill'>" + p.riskMode + " / " + p.horizon + " / " + item.scan.regime + "</span>" +
+          "<p>Entry " + p.entryPrice + " | Stop " + p.stopLossPrice + " | Target " + p.takeProfitPrice + "</p>" +
+          "<p>Risk " + r.estimatedLossQuote.toFixed(2) + " USDT -> reward " + r.estimatedRewardQuote.toFixed(2) + " USDT (" + r.riskRewardRatio.toFixed(2) + "R)</p>" +
+          "<p><b>Thesis:</b> " + p.thesis + "</p>" +
+        "</article>";
+      }).join("");
+    }
+
     async function loadJournal() {
       const res = await fetch("/api/journal");
       const body = await res.json();
@@ -562,6 +663,18 @@ function renderApp(): string {
       }
       renderVerdict(body);
       await loadJournal();
+    });
+
+    scanModelButton.addEventListener("click", async () => {
+      modelEl.innerHTML = "<div class='empty'>Scanning live MEXC futures candles...</div>";
+      const margin = encodeURIComponent(formPayload().marginQuote || 12);
+      const res = await fetch("/api/model-scan?notional=" + margin);
+      const body = await res.json();
+      if (!res.ok) {
+        modelEl.innerHTML = "<div class='empty'>Model scan failed: " + body.message + "</div>";
+        return;
+      }
+      renderModel(body);
     });
 
     loadJournal().catch((err) => {
