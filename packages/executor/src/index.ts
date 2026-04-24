@@ -39,6 +39,11 @@ export {
   writeFill,
   writeSubmitted,
 } from "./ledger.js";
+export {
+  listRecentTradeJournalEntries,
+  saveTradeJournalEntry,
+} from "./journal.js";
+export type { TradeJournalEntry } from "./journal.js";
 export { panic } from "./panic.js";
 export {
   buildApprovalHandler,

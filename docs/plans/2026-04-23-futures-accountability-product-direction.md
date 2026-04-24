@@ -19,6 +19,8 @@ Current focus is **MEXC futures first**, not spot first, with emphasis on:
 - `ETHUSDT`
 - `SOLUSDT`
 
+**2026-04-24 scope correction:** the initial working model is futures-only on MEXC for those three symbols. Spot work may remain as infrastructure, but the product surface should not drift toward spot, other exchanges, or a broad symbol universe until this first loop works.
+
 The system should support:
 - longs and shorts
 - scalps and longer holds
@@ -110,10 +112,12 @@ But signals alone are not enough. The point is:
 
 ### Near-term
 
+- keep the first working model deterministic and inspectable: MEXC futures candles -> BTC/ETH/SOL long/short ideas -> accountability review -> journal
 - keep extending the futures-first signal engine for BTC/ETH/SOL
 - ingest and analyze Matt's trading history
 - compute style fingerprints that reflect leverage, time-of-day, hold time, and size behavior
 - build conflict flags for risky deviations from Matt's better patterns
+- ship the local accountability cockpit before adding more surfaces
 
 ### Mid-term
 

@@ -28,6 +28,7 @@
     "style:fingerprint": "tsx scripts/style-fingerprint.ts",
     "trade:review": "tsx scripts/trade-review.ts",
     "trade:journal": "tsx scripts/trade-review.ts --save",
+    "trade:app": "tsx scripts/trader-app.ts",
     "lefthook:install": "pnpm exec lefthook install"
   },
   "devDependencies": {
