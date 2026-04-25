@@ -280,6 +280,79 @@ function buildMacdSignal(
   };
 }
 
+function buildEmaPullbackSignal(
+  candles: MarketCandle[],
+  timeframe: string,
+): StrategySignal {
+  const closes = candles.map((candle) => candle.close);
+  const ema20 = ema(closes, 20);
+  const ema50 = ema(closes, 50);
+  const rsi14 = rsi(closes, 14);
+  const current = candles.at(-1);
+  if (!current || candles.length < 55) {
+    return {
+      strategy: "ema-pullback",
+      timeframe,
+      bias: "neutral",
+      confidence: 0.34,
+      summary: "not enough candles to judge medium EMA pullback structure",
+    };
+  }
+
+  const fast = ema20.at(-1) ?? current.close;
+  const slow = ema50.at(-1) ?? current.close;
+  const momentum = rsi14.at(-1) ?? 50;
+  const metrics = { price: current.close, ema20: fast, ema50: slow, rsi: momentum };
+
+  const bullishTrend = fast > slow && current.close > slow;
+  const bearishTrend = fast < slow && current.close < slow;
+  const longReclaim =
+    bullishTrend &&
+    current.low <= fast * 1.01 &&
+    current.close > fast &&
+    current.close > current.open &&
+    momentum >= 42;
+  const shortReject =
+    bearishTrend &&
+    current.high >= fast * 0.99 &&
+    current.close < fast &&
+    current.close < current.open &&
+    momentum <= 58;
+
+  if (longReclaim) {
+    return {
+      strategy: "ema-pullback",
+      timeframe,
+      bias: "long",
+      confidence: 0.69,
+      summary:
+        "medium-risk long pullback: price tagged/reclaimed the 20 EMA while the 50 EMA trend stayed supportive",
+      metrics,
+    };
+  }
+  if (shortReject) {
+    return {
+      strategy: "ema-pullback",
+      timeframe,
+      bias: "short",
+      confidence: 0.69,
+      summary:
+        "medium-risk short pullback: price rejected the 20 EMA while the 50 EMA trend stayed bearish",
+      metrics,
+    };
+  }
+
+  return {
+    strategy: "ema-pullback",
+    timeframe,
+    bias: "neutral",
+    confidence: bullishTrend || bearishTrend ? 0.5 : 0.38,
+    summary:
+      "medium EMA pullback is not clean yet; wait for reclaim/rejection at trend support",
+    metrics,
+  };
+}
+
 function buildBreakoutSignal(
   candles: MarketCandle[],
   timeframe: string,
@@ -574,6 +647,10 @@ export function analyzeMarket(input: AnalyzeMarketInput): MarketScan {
   const trendSignal = buildTrendSignal(input.longCandles, input.longTimeframe);
   const rsiSignal = buildRsiSignal(input.shortCandles, input.shortTimeframe);
   const macdSignal = buildMacdSignal(input.shortCandles, input.shortTimeframe);
+  const emaPullbackSignal = buildEmaPullbackSignal(
+    input.shortCandles,
+    input.shortTimeframe,
+  );
   const breakoutSignal = buildBreakoutSignal(
     input.shortCandles,
     input.shortTimeframe,
@@ -587,6 +664,7 @@ export function analyzeMarket(input: AnalyzeMarketInput): MarketScan {
     trendSignal,
     rsiSignal,
     macdSignal,
+    emaPullbackSignal,
     breakoutSignal,
     gridSignal,
     contextSignal,

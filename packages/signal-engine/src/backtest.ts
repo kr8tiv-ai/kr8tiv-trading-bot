@@ -1,5 +1,5 @@
 import type { MarketCandle } from "@kr8tiv/shared-schemas";
-import { atr } from "./indicators.js";
+import { atr, ema, rsi } from "./indicators.js";
 
 export type BacktestTrade = {
   direction: "long" | "short";
@@ -11,7 +11,10 @@ export type BacktestTrade = {
   exitReason: "target" | "stop" | "end";
 };
 
-export type BacktestStrategyName = "breakout-trailing" | "adaptive-grid";
+export type BacktestStrategyName =
+  | "breakout-trailing"
+  | "adaptive-grid"
+  | "ema-pullback";
 
 export type BreakoutBacktestOptions = {
   lookback?: number;
@@ -24,6 +27,12 @@ export type GridBacktestOptions = {
   lookback?: number;
   gridSpacingPct?: number;
   stopGridSteps?: number;
+  feeRate?: number;
+};
+
+export type EmaPullbackBacktestOptions = {
+  lookback?: number;
+  riskMultipleTarget?: number;
   feeRate?: number;
 };
 
@@ -43,6 +52,10 @@ export type BreakoutBacktestResult = StrategyBacktestResult & {
 
 export type GridBacktestResult = StrategyBacktestResult & {
   strategy: "adaptive-grid";
+};
+
+export type EmaPullbackBacktestResult = StrategyBacktestResult & {
+  strategy: "ema-pullback";
 };
 
 export type StrategyBacktestComparison = {
@@ -372,6 +385,136 @@ export function backtestAdaptiveGrid(
   return summarize("adaptive-grid", trades, warnings);
 }
 
+export function backtestEmaPullback(
+  candles: MarketCandle[],
+  options: EmaPullbackBacktestOptions = {},
+): EmaPullbackBacktestResult {
+  const lookback = options.lookback ?? 50;
+  const targetMultiple = options.riskMultipleTarget ?? 1.6;
+  const feeRate = options.feeRate ?? 0.0006;
+  const warnings: string[] = [];
+  const trades: BacktestTrade[] = [];
+
+  if (candles.length < Math.max(lookback, 55) + 3) {
+    return summarize("ema-pullback", [], [
+      "not enough candles for EMA pullback backtest",
+    ]);
+  }
+
+  const closes = candles.map((candle) => candle.close);
+  const ema20 = ema(closes, 20);
+  const ema50 = ema(closes, 50);
+  const rsi14 = rsi(closes, 14);
+  const atr14 = atr(candles, 14);
+  let position: OpenPosition | null = null;
+
+  for (let i = Math.max(lookback, 50); i < candles.length; i += 1) {
+    const candle = candles[i]!;
+
+    if (position) {
+      if (position.direction === "long") {
+        const exitPrice =
+          candle.high >= position.targetPrice
+            ? position.targetPrice
+            : candle.low <= position.stopPrice
+              ? position.stopPrice
+              : null;
+        if (exitPrice !== null) {
+          trades.push({
+            direction: "long",
+            entryTimeMs: position.entryTimeMs,
+            exitTimeMs: candle.closeTimeMs,
+            entryPrice: position.entryPrice,
+            exitPrice,
+            pnlPct: tradePnlPct(position, exitPrice, feeRate),
+            exitReason: exitPrice === position.targetPrice ? "target" : "stop",
+          });
+          position = null;
+        }
+      } else {
+        const exitPrice =
+          candle.low <= position.targetPrice
+            ? position.targetPrice
+            : candle.high >= position.stopPrice
+              ? position.stopPrice
+              : null;
+        if (exitPrice !== null) {
+          trades.push({
+            direction: "short",
+            entryTimeMs: position.entryTimeMs,
+            exitTimeMs: candle.closeTimeMs,
+            entryPrice: position.entryPrice,
+            exitPrice,
+            pnlPct: tradePnlPct(position, exitPrice, feeRate),
+            exitReason: exitPrice === position.targetPrice ? "target" : "stop",
+          });
+          position = null;
+        }
+      }
+      continue;
+    }
+
+    const fast = ema20[i] ?? candle.close;
+    const slow = ema50[i] ?? candle.close;
+    const momentum = rsi14[i] ?? 50;
+    const riskDistance = Math.max(
+      atr14[i] ?? candle.close * 0.005,
+      candle.close * 0.005,
+    );
+
+    const bullishTrend = fast > slow && candle.close > slow;
+    const bearishTrend = fast < slow && candle.close < slow;
+    const longReclaim =
+      bullishTrend &&
+      candle.low <= fast * 1.01 &&
+      candle.close > fast &&
+      candle.close > candle.open &&
+      momentum >= 42;
+    const shortReject =
+      bearishTrend &&
+      candle.high >= fast * 0.99 &&
+      candle.close < fast &&
+      candle.close < candle.open &&
+      momentum <= 58;
+
+    if (longReclaim) {
+      position = {
+        direction: "long",
+        entryTimeMs: candle.closeTimeMs,
+        entryPrice: candle.close,
+        stopPrice: candle.close - riskDistance,
+        targetPrice: candle.close + riskDistance * targetMultiple,
+        riskDistance,
+      };
+    } else if (shortReject) {
+      position = {
+        direction: "short",
+        entryTimeMs: candle.closeTimeMs,
+        entryPrice: candle.close,
+        stopPrice: candle.close + riskDistance,
+        targetPrice: candle.close - riskDistance * targetMultiple,
+        riskDistance,
+      };
+    }
+  }
+
+  const last = candles.at(-1);
+  if (position && last) {
+    trades.push({
+      direction: position.direction,
+      entryTimeMs: position.entryTimeMs,
+      exitTimeMs: last.closeTimeMs,
+      entryPrice: position.entryPrice,
+      exitPrice: last.close,
+      pnlPct: tradePnlPct(position, last.close, feeRate),
+      exitReason: "end",
+    });
+    warnings.push("last EMA pullback position closed at final candle for reporting");
+  }
+
+  return summarize("ema-pullback", trades, warnings);
+}
+
 function strategyScore(result: StrategyBacktestResult): number {
   const tradePenalty = result.trades.length === 0 ? 2 : 0;
   const profitFactorBonus = Math.min(result.profitFactor, 3) * 0.25;
@@ -380,11 +523,14 @@ function strategyScore(result: StrategyBacktestResult): number {
 
 export function compareBacktestStrategies(
   candles: MarketCandle[],
-  options: BreakoutBacktestOptions & GridBacktestOptions = {},
+  options: BreakoutBacktestOptions &
+    GridBacktestOptions &
+    EmaPullbackBacktestOptions = {},
 ): StrategyBacktestComparison {
   const breakout = backtestBreakoutTrailing(candles, options);
   const grid = backtestAdaptiveGrid(candles, options);
-  const results = [breakout, grid].sort(
+  const pullback = backtestEmaPullback(candles, options);
+  const results = [breakout, grid, pullback].sort(
     (a, b) => strategyScore(b) - strategyScore(a),
   );
   const best =
@@ -396,7 +542,9 @@ export function compareBacktestStrategies(
       ? "range conditions are scoring better for adaptive futures grid planning"
       : best?.strategy === "breakout-trailing"
         ? "momentum conditions are scoring better for breakout + trailing-stop planning"
-        : "No strategy edge is positive on this replay; protect capital and wait.";
+        : best?.strategy === "ema-pullback"
+          ? "medium-risk trend pullbacks are scoring better than breakout or grid"
+          : "No strategy edge is positive on this replay; protect capital and wait.";
 
   return {
     results,

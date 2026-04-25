@@ -3,6 +3,7 @@ import type { MarketCandle } from "@kr8tiv/shared-schemas";
 import {
   backtestAdaptiveGrid,
   backtestBreakoutTrailing,
+  backtestEmaPullback,
   compareBacktestStrategies,
 } from "./backtest.js";
 
@@ -107,5 +108,56 @@ describe("backtestAdaptiveGrid", () => {
 
     expect(comparison.best).toBeNull();
     expect(comparison.recommendation).toContain("No strategy edge");
+  });
+});
+
+describe("backtestEmaPullback", () => {
+  it("captures a medium-risk trend pullback reclaim", () => {
+    const candles = [
+      ...Array.from({ length: 70 }, (_, i) => candle(i, 100 + i * 0.8, 1500)),
+      {
+        ...candle(70, 153, 2200),
+        open: 150,
+        high: 154,
+        low: 147,
+      },
+      candle(71, 157, 2200),
+      candle(72, 161, 2200),
+      candle(73, 164, 2200),
+    ];
+
+    const result = backtestEmaPullback(candles, {
+      feeRate: 0,
+      riskMultipleTarget: 1.6,
+    });
+
+    expect(result.strategy).toBe("ema-pullback");
+    expect(result.trades.length).toBeGreaterThan(0);
+    expect(result.trades[0]?.direction).toBe("long");
+    expect(result.netPnlPct).toBeGreaterThan(0);
+  });
+
+  it("includes ema-pullback in strategy comparison", () => {
+    const candles = [
+      ...Array.from({ length: 70 }, (_, i) => candle(i, 200 - i * 0.6, 1500)),
+      {
+        ...candle(70, 161, 2200),
+        open: 164,
+        high: 168,
+        low: 160,
+      },
+      candle(71, 156, 2200),
+      candle(72, 152, 2200),
+      candle(73, 149, 2200),
+    ];
+
+    const comparison = compareBacktestStrategies(candles, {
+      feeRate: 0,
+      riskMultipleTarget: 1.6,
+    });
+
+    expect(comparison.results.map((item) => item.strategy)).toContain(
+      "ema-pullback",
+    );
   });
 });

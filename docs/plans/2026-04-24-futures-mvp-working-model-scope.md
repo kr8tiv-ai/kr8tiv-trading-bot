@@ -61,13 +61,14 @@ The app should not only emit a setup; it should show whether the setup family ha
 
 Initial strategy families:
 - `breakout-trailing` — momentum breakout with ATR stop, breakeven after 1R, trailing stop after 1.5R
+- `ema-pullback` — medium-risk trend-continuation setup after price tags/reclaims the 20 EMA while the 50 EMA confirms trend direction
 - `adaptive-grid` — range-bound futures grid planner for BTC/ETH/SOL; decision-support only at first, not autonomous live grid execution
 - `futures-context` — funding, fair/index basis, volume, and open-interest context used as confirmation/veto
 
 The Backtest Lab should replay the same candles the signal engine uses and rank strategy effectiveness per symbol. Matt should be able to see:
 - best recent strategy per symbol
 - net PnL %, win rate, profit factor, max drawdown, and trade count
-- whether grid or breakout is currently a better fit
+- whether grid, EMA pullback, or breakout is currently a better fit
 - warnings when there is not enough data or the market is too compressed/wide for a clean grid
 - a saved strategy-effectiveness memory so repeated backtests show which family has been working lately instead of only showing a one-off replay
 

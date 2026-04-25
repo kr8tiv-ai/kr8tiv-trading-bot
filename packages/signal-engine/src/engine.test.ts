@@ -165,4 +165,35 @@ describe("analyzeMarket", () => {
         .some((signal) => signal.strategy === "adaptive-grid"),
     ).toBe(true);
   });
+
+  it("adds an EMA pullback medium signal when price reclaims trend support", () => {
+    const shortTerm = [
+      ...makeTrendCandles(100, 0.8, 80, 2000),
+      {
+        ...makeTrendCandles(164, 0.1, 1, 2600)[0]!,
+        open: 158,
+        high: 165,
+        low: 153,
+        close: 163,
+      },
+    ];
+    const longTerm = makeTrendCandles(80, 2.2, 90, 8000);
+    const scan = analyzeMarket({
+      symbol: "BTCUSDT",
+      market: "mexc-futures",
+      shortTimeframe: "15m",
+      longTimeframe: "4h",
+      shortCandles: shortTerm,
+      longCandles: longTerm,
+    });
+
+    const pullback = scan.strategies.find(
+      (signal) => signal.strategy === "ema-pullback",
+    );
+    expect(pullback).toMatchObject({
+      bias: "long",
+      timeframe: "15m",
+    });
+    expect(pullback?.summary).toContain("medium");
+  });
 });
