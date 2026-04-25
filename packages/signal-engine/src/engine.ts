@@ -1,13 +1,14 @@
 import {
-  MarketScanSchema,
-  TradeIdeaSchema,
   type MarketCandle,
   type MarketScan,
+  MarketScanSchema,
   type MexcFuturesMarketContext,
   type StrategySignal,
   type TradeIdea,
+  TradeIdeaSchema,
 } from "@kr8tiv/shared-schemas";
 import { atr, ema, macd, rsi } from "./indicators.js";
+import { buildVolumeProfile } from "./volume-profile.js";
 
 const SUPPORTED_SYMBOLS = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const MIN_HISTORY = 60;
@@ -78,10 +79,7 @@ function regimeFromTrend(candles: MarketCandle[]): "bullish" | "bearish" | "rang
   return "range";
 }
 
-function buildTrendSignal(
-  candles: MarketCandle[],
-  timeframe: string,
-): StrategySignal {
+function buildTrendSignal(candles: MarketCandle[], timeframe: string): StrategySignal {
   const closes = candles.map((candle) => candle.close);
   const ema20 = ema(closes, 20);
   const ema50 = ema(closes, 50);
@@ -120,10 +118,7 @@ function buildTrendSignal(
   };
 }
 
-function buildRsiSignal(
-  candles: MarketCandle[],
-  timeframe: string,
-): StrategySignal {
+function buildRsiSignal(candles: MarketCandle[], timeframe: string): StrategySignal {
   const closes = candles.map((candle) => candle.close);
   const values = rsi(closes, 14);
   const current = values.at(-1) ?? 50;
@@ -195,10 +190,7 @@ function buildRsiSignal(
   };
 }
 
-function buildMacdSignal(
-  candles: MarketCandle[],
-  timeframe: string,
-): StrategySignal {
+function buildMacdSignal(candles: MarketCandle[], timeframe: string): StrategySignal {
   const closes = candles.map((candle) => candle.close);
   const values = macd(closes);
 
@@ -207,7 +199,6 @@ function buildMacdSignal(
   const signalNow = values.signal.at(-1) ?? 0;
   const signalPrev = values.signal.at(-2) ?? signalNow;
   const histogramNow = values.histogram.at(-1) ?? 0;
-  const histogramPrev = values.histogram.at(-2) ?? histogramNow;
 
   if (macdPrev <= signalPrev && macdNow > signalNow) {
     return {
@@ -280,10 +271,7 @@ function buildMacdSignal(
   };
 }
 
-function buildEmaPullbackSignal(
-  candles: MarketCandle[],
-  timeframe: string,
-): StrategySignal {
+function buildEmaPullbackSignal(candles: MarketCandle[], timeframe: string): StrategySignal {
   const closes = candles.map((candle) => candle.close);
   const ema20 = ema(closes, 20);
   const ema50 = ema(closes, 50);
@@ -347,16 +335,12 @@ function buildEmaPullbackSignal(
     timeframe,
     bias: "neutral",
     confidence: bullishTrend || bearishTrend ? 0.5 : 0.38,
-    summary:
-      "medium EMA pullback is not clean yet; wait for reclaim/rejection at trend support",
+    summary: "medium EMA pullback is not clean yet; wait for reclaim/rejection at trend support",
     metrics,
   };
 }
 
-function buildBreakoutSignal(
-  candles: MarketCandle[],
-  timeframe: string,
-): StrategySignal {
+function buildBreakoutSignal(candles: MarketCandle[], timeframe: string): StrategySignal {
   const recent = candles.slice(-21);
   const last = recent.at(-1);
   if (!last || recent.length < 21) {
@@ -373,8 +357,7 @@ function buildBreakoutSignal(
   const resistance = Math.max(...prior.map((candle) => candle.high));
   const support = Math.min(...prior.map((candle) => candle.low));
   const avgVolume = average(prior.map((candle) => candle.volume));
-  const volumeRatio =
-    avgVolume <= 0 ? 0 : last.volume / Math.max(avgVolume, Number.EPSILON);
+  const volumeRatio = avgVolume <= 0 ? 0 : last.volume / Math.max(avgVolume, Number.EPSILON);
 
   if (last.close > resistance * 1.001 && volumeRatio >= 1.05) {
     return {
@@ -407,10 +390,7 @@ function buildBreakoutSignal(
   };
 }
 
-function buildAdaptiveGridSignal(
-  candles: MarketCandle[],
-  timeframe: string,
-): StrategySignal {
+function buildAdaptiveGridSignal(candles: MarketCandle[], timeframe: string): StrategySignal {
   const recent = candles.slice(-36);
   const last = recent.at(-1);
   if (!last || recent.length < 36) {
@@ -465,8 +445,7 @@ function buildAdaptiveGridSignal(
       timeframe,
       bias: "long",
       confidence: 0.62,
-      summary:
-        "price is near the lower grid band inside a tradable futures range",
+      summary: "price is near the lower grid band inside a tradable futures range",
       metrics,
     };
   }
@@ -476,8 +455,7 @@ function buildAdaptiveGridSignal(
       timeframe,
       bias: "short",
       confidence: 0.62,
-      summary:
-        "price is near the upper grid band inside a tradable futures range",
+      summary: "price is near the upper grid band inside a tradable futures range",
       metrics,
     };
   }
@@ -492,9 +470,97 @@ function buildAdaptiveGridSignal(
   };
 }
 
-function buildFuturesContextSignal(
-  context?: MexcFuturesMarketContext,
-): StrategySignal {
+function buildVolumeProfileSignal(candles: MarketCandle[], timeframe: string): StrategySignal {
+  const profile = buildVolumeProfile(candles, {
+    lookback: 80,
+    binCount: 24,
+  });
+  const current = candles.at(-1);
+  if (!profile || !current) {
+    return {
+      strategy: "volume-profile",
+      timeframe,
+      bias: "neutral",
+      confidence: 0.34,
+      summary: "not enough candle volume to build a useful volume profile",
+    };
+  }
+
+  const metrics = {
+    pointOfControl: profile.pointOfControl,
+    valueAreaHigh: profile.valueAreaHigh,
+    valueAreaLow: profile.valueAreaLow,
+    supportLevel: profile.supportLevel ?? 0,
+    resistanceLevel: profile.resistanceLevel ?? 0,
+    pocSignificance: profile.pocSignificance,
+    inValueArea: profile.inValueArea ? 1 : 0,
+    inLowVolumeZone: profile.inLowVolumeZone ? 1 : 0,
+  };
+  const band = Math.max(profile.binSizePct * 1.5, 0.006);
+  const nearValueLow = current.low <= profile.valueAreaLow * (1 + band);
+  const nearValueHigh = current.high >= profile.valueAreaHigh * (1 - band);
+  const bullishBounce = nearValueLow && current.close > current.open;
+  const bearishReject = nearValueHigh && current.close < current.open;
+  const aboveValueBreakout = profile.inLowVolumeZone && current.close > profile.valueAreaHigh;
+  const belowValueBreakdown = profile.inLowVolumeZone && current.close < profile.valueAreaLow;
+
+  if (bullishBounce) {
+    return {
+      strategy: "volume-profile",
+      timeframe,
+      bias: "long",
+      confidence: 0.66,
+      summary:
+        "Jarvis-style volume profile long: price is bouncing from value area support toward the point of control",
+      metrics,
+    };
+  }
+  if (bearishReject) {
+    return {
+      strategy: "volume-profile",
+      timeframe,
+      bias: "short",
+      confidence: 0.66,
+      summary:
+        "Jarvis-style volume profile short: price is rejecting value area resistance back toward the point of control",
+      metrics,
+    };
+  }
+  if (aboveValueBreakout) {
+    return {
+      strategy: "volume-profile",
+      timeframe,
+      bias: "long",
+      confidence: 0.58,
+      summary:
+        "price is breaking above the value area through a low-volume pocket; movement can travel quickly",
+      metrics,
+    };
+  }
+  if (belowValueBreakdown) {
+    return {
+      strategy: "volume-profile",
+      timeframe,
+      bias: "short",
+      confidence: 0.58,
+      summary:
+        "price is breaking below the value area through a low-volume pocket; downside movement can travel quickly",
+      metrics,
+    };
+  }
+
+  return {
+    strategy: "volume-profile",
+    timeframe,
+    bias: "neutral",
+    confidence: profile.inValueArea ? 0.48 : 0.42,
+    summary:
+      "volume profile is mapped, but price is not reacting cleanly at value area support/resistance yet",
+    metrics,
+  };
+}
+
+function buildFuturesContextSignal(context?: MexcFuturesMarketContext): StrategySignal {
   if (!context) {
     return {
       strategy: "futures-context",
@@ -506,8 +572,7 @@ function buildFuturesContextSignal(
   }
 
   const crowdedLongs = context.fundingRate >= 0.0005 && context.basisPct >= 0.001;
-  const crowdedShorts =
-    context.fundingRate <= -0.0005 && context.basisPct <= -0.001;
+  const crowdedShorts = context.fundingRate <= -0.0005 && context.basisPct <= -0.001;
 
   if (crowdedLongs) {
     return {
@@ -515,8 +580,7 @@ function buildFuturesContextSignal(
       timeframe: "market-context",
       bias: "short",
       confidence: 0.56,
-      summary:
-        "positive funding and positive fair/index basis suggest crowded long pressure",
+      summary: "positive funding and positive fair/index basis suggest crowded long pressure",
       metrics: {
         fundingRate: context.fundingRate,
         basisPct: context.basisPct,
@@ -533,8 +597,7 @@ function buildFuturesContextSignal(
       timeframe: "market-context",
       bias: "long",
       confidence: 0.56,
-      summary:
-        "negative funding and negative fair/index basis suggest crowded short pressure",
+      summary: "negative funding and negative fair/index basis suggest crowded short pressure",
       metrics: {
         fundingRate: context.fundingRate,
         basisPct: context.basisPct,
@@ -595,12 +658,8 @@ function buildIdea(params: {
       ? [params.currentPrice + rewardOne, params.currentPrice + rewardTwo]
       : [params.currentPrice - rewardOne, params.currentPrice - rewardTwo];
 
-  const alignedStrategies = params.strategies.filter(
-    (signal) => signal.bias === params.direction,
-  );
-  const reasons = alignedStrategies
-    .slice(0, 3)
-    .map((signal) => signal.summary.toLowerCase());
+  const alignedStrategies = params.strategies.filter((signal) => signal.bias === params.direction);
+  const reasons = alignedStrategies.slice(0, 3).map((signal) => signal.summary.toLowerCase());
   const thesis = `${params.horizon} ${params.direction} bias: ${reasons.join("; ")}`;
 
   return TradeIdeaSchema.parse({
@@ -624,13 +683,8 @@ export function analyzeMarket(input: AnalyzeMarketInput): MarketScan {
   }
 
   const warnings: string[] = [];
-  if (
-    input.shortCandles.length < MIN_HISTORY ||
-    input.longCandles.length < MIN_HISTORY
-  ) {
-    warnings.push(
-      `insufficient history: need at least ${MIN_HISTORY} candles on both timeframes`,
-    );
+  if (input.shortCandles.length < MIN_HISTORY || input.longCandles.length < MIN_HISTORY) {
+    warnings.push(`insufficient history: need at least ${MIN_HISTORY} candles on both timeframes`);
     return MarketScanSchema.parse({
       symbol: input.symbol,
       market: input.market,
@@ -647,18 +701,10 @@ export function analyzeMarket(input: AnalyzeMarketInput): MarketScan {
   const trendSignal = buildTrendSignal(input.longCandles, input.longTimeframe);
   const rsiSignal = buildRsiSignal(input.shortCandles, input.shortTimeframe);
   const macdSignal = buildMacdSignal(input.shortCandles, input.shortTimeframe);
-  const emaPullbackSignal = buildEmaPullbackSignal(
-    input.shortCandles,
-    input.shortTimeframe,
-  );
-  const breakoutSignal = buildBreakoutSignal(
-    input.shortCandles,
-    input.shortTimeframe,
-  );
-  const gridSignal = buildAdaptiveGridSignal(
-    input.shortCandles,
-    input.shortTimeframe,
-  );
+  const emaPullbackSignal = buildEmaPullbackSignal(input.shortCandles, input.shortTimeframe);
+  const breakoutSignal = buildBreakoutSignal(input.shortCandles, input.shortTimeframe);
+  const gridSignal = buildAdaptiveGridSignal(input.shortCandles, input.shortTimeframe);
+  const volumeProfileSignal = buildVolumeProfileSignal(input.shortCandles, input.shortTimeframe);
   const contextSignal = buildFuturesContextSignal(input.marketContext);
   const strategies = [
     trendSignal,
@@ -667,6 +713,7 @@ export function analyzeMarket(input: AnalyzeMarketInput): MarketScan {
     emaPullbackSignal,
     breakoutSignal,
     gridSignal,
+    volumeProfileSignal,
     contextSignal,
   ];
 
@@ -720,9 +767,7 @@ export function analyzeMarket(input: AnalyzeMarketInput): MarketScan {
   if (
     gridSignal.bias !== "neutral" &&
     gridSignal.confidence >= 0.58 &&
-    !ideas.some(
-      (idea) => idea.direction === gridSignal.bias && idea.horizon === "scalp",
-    )
+    !ideas.some((idea) => idea.direction === gridSignal.bias && idea.horizon === "scalp")
   ) {
     ideas.push(
       buildIdea({

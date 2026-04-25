@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { MarketCandle } from "@kr8tiv/shared-schemas";
+import { describe, expect, it } from "vitest";
 import { analyzeMarket } from "./engine.js";
 
 function makeTrendCandles(
@@ -24,11 +24,7 @@ function makeTrendCandles(
   });
 }
 
-function makeRangeCandles(
-  base: number,
-  count: number,
-  lastClose: number,
-): MarketCandle[] {
+function makeRangeCandles(base: number, count: number, lastClose: number): MarketCandle[] {
   return Array.from({ length: count }, (_, i) => {
     const wave = Math.sin(i / 2) * 1.4;
     const close = i === count - 1 ? lastClose : base + wave;
@@ -41,6 +37,24 @@ function makeRangeCandles(
       close,
       volume: 2_000 + (i % 5) * 50,
       quoteVolume: close * (2_000 + (i % 5) * 50),
+    };
+  });
+}
+
+function makeVolumeProfileCandles(count: number, lastClose: number): MarketCandle[] {
+  return Array.from({ length: count }, (_, i) => {
+    const wave = Math.sin(i / 3) * 1.8;
+    const close = i === count - 1 ? lastClose : 100 + wave;
+    const nearPoc = Math.abs(close - 100) < 0.7;
+    return {
+      openTimeMs: 1_700_000_000_000 + i * 900_000,
+      closeTimeMs: 1_700_000_900_000 + i * 900_000,
+      open: i === count - 1 ? close - 0.7 : close,
+      high: close + 0.9,
+      low: close - 1.2,
+      close,
+      volume: nearPoc ? 5_000 : 900,
+      quoteVolume: close * (nearPoc ? 5_000 : 900),
     };
   });
 }
@@ -125,9 +139,7 @@ describe("analyzeMarket", () => {
       },
     });
 
-    const contextSignal = scan.strategies.find(
-      (signal) => signal.strategy === "futures-context",
-    );
+    const contextSignal = scan.strategies.find((signal) => signal.strategy === "futures-context");
     expect(contextSignal).toMatchObject({
       bias: "short",
       metrics: {
@@ -150,9 +162,7 @@ describe("analyzeMarket", () => {
       longCandles: longTerm,
     });
 
-    const gridSignal = scan.strategies.find(
-      (signal) => signal.strategy === "adaptive-grid",
-    );
+    const gridSignal = scan.strategies.find((signal) => signal.strategy === "adaptive-grid");
     expect(gridSignal).toMatchObject({
       bias: "long",
       timeframe: "15m",
@@ -167,10 +177,14 @@ describe("analyzeMarket", () => {
   });
 
   it("adds an EMA pullback medium signal when price reclaims trend support", () => {
+    const pullbackCandle = makeTrendCandles(164, 0.1, 1, 2600)[0];
+    if (!pullbackCandle) {
+      throw new Error("test fixture failed to create pullback candle");
+    }
     const shortTerm = [
       ...makeTrendCandles(100, 0.8, 80, 2000),
       {
-        ...makeTrendCandles(164, 0.1, 1, 2600)[0]!,
+        ...pullbackCandle,
         open: 158,
         high: 165,
         low: 153,
@@ -187,13 +201,32 @@ describe("analyzeMarket", () => {
       longCandles: longTerm,
     });
 
-    const pullback = scan.strategies.find(
-      (signal) => signal.strategy === "ema-pullback",
-    );
+    const pullback = scan.strategies.find((signal) => signal.strategy === "ema-pullback");
     expect(pullback).toMatchObject({
       bias: "long",
       timeframe: "15m",
     });
     expect(pullback?.summary).toContain("medium");
+  });
+
+  it("adds a Jarvis-inspired volume-profile long signal near value-area support", () => {
+    const shortTerm = makeVolumeProfileCandles(90, 98.2);
+    const longTerm = makeRangeCandles(100, 90, 100.1);
+    const scan = analyzeMarket({
+      symbol: "ETHUSDT",
+      market: "mexc-futures",
+      shortTimeframe: "15m",
+      longTimeframe: "4h",
+      shortCandles: shortTerm,
+      longCandles: longTerm,
+    });
+
+    const volumeProfile = scan.strategies.find((signal) => signal.strategy === "volume-profile");
+    expect(volumeProfile).toMatchObject({
+      bias: "long",
+      timeframe: "15m",
+    });
+    expect(volumeProfile?.summary).toContain("value area");
+    expect(volumeProfile?.metrics?.pointOfControl).toBeGreaterThan(99);
   });
 });

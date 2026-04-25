@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
 import type { MarketCandle } from "@kr8tiv/shared-schemas";
+import { describe, expect, it } from "vitest";
 import {
   backtestAdaptiveGrid,
   backtestBreakoutTrailing,
   backtestEmaPullback,
+  backtestVolumeProfile,
   compareBacktestStrategies,
 } from "./backtest.js";
 
@@ -84,12 +85,8 @@ describe("backtestAdaptiveGrid", () => {
       feeRate: 0,
     });
 
-    expect(comparison.results.map((item) => item.strategy)).toContain(
-      "breakout-trailing",
-    );
-    expect(comparison.results.map((item) => item.strategy)).toContain(
-      "adaptive-grid",
-    );
+    expect(comparison.results.map((item) => item.strategy)).toContain("breakout-trailing");
+    expect(comparison.results.map((item) => item.strategy)).toContain("adaptive-grid");
     expect(comparison.best?.strategy).toBe("adaptive-grid");
     expect(comparison.recommendation).toContain("range");
   });
@@ -156,8 +153,52 @@ describe("backtestEmaPullback", () => {
       riskMultipleTarget: 1.6,
     });
 
-    expect(comparison.results.map((item) => item.strategy)).toContain(
-      "ema-pullback",
-    );
+    expect(comparison.results.map((item) => item.strategy)).toContain("ema-pullback");
+  });
+});
+
+describe("backtestVolumeProfile", () => {
+  it("captures a value-area-low bounce back toward the point of control", () => {
+    const profileCandles = Array.from({ length: 80 }, (_, i) => {
+      const close = 100 + Math.sin(i / 3) * 1.6;
+      const nearPoc = Math.abs(close - 100) < 0.6;
+      return candle(i, close, nearPoc ? 5_000 : 900);
+    });
+    const candles = [
+      ...profileCandles,
+      {
+        ...candle(80, 98.15, 3_400),
+        open: 97.6,
+        high: 98.5,
+        low: 96.8,
+      },
+      candle(81, 99.4, 2_400),
+      candle(82, 100.3, 2_400),
+    ];
+
+    const result = backtestVolumeProfile(candles, {
+      lookback: 64,
+      feeRate: 0,
+    });
+
+    expect(result.strategy).toBe("volume-profile");
+    expect(result.trades.length).toBeGreaterThan(0);
+    expect(result.trades[0]?.direction).toBe("long");
+    expect(result.netPnlPct).toBeGreaterThan(0);
+  });
+
+  it("includes volume-profile in strategy comparison so effectiveness memory can rank it", () => {
+    const candles = Array.from({ length: 100 }, (_, i) => {
+      const close = 100 + Math.sin(i / 4) * 2;
+      const nearPoc = Math.abs(close - 100) < 0.8;
+      return candle(i, close, nearPoc ? 4_800 : 850);
+    });
+
+    const comparison = compareBacktestStrategies(candles, {
+      lookback: 40,
+      feeRate: 0,
+    });
+
+    expect(comparison.results.map((item) => item.strategy)).toContain("volume-profile");
   });
 });

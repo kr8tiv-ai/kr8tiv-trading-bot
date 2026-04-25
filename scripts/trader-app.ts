@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { reviewTradePlan } from "@kr8tiv/accountability";
-import { closeDatabase, openDatabase, type BetterSqliteDatabase } from "@kr8tiv/db";
+import { type BetterSqliteDatabase, closeDatabase, openDatabase } from "@kr8tiv/db";
 import {
   applySchema,
   findTradeJournalEntry,
@@ -13,6 +13,16 @@ import {
 import { createLogger } from "@kr8tiv/logger";
 import { MEXCFuturesClient } from "@kr8tiv/mexc-futures";
 import { WindowsCredentialManagerProvider } from "@kr8tiv/secrets";
+import {
+  type AccountabilityCheck,
+  type AccountableTradePlan,
+  AccountableTradePlanSchema,
+  type ImportedTrade,
+  ImportedTradeSchema,
+  type MarketScan,
+  type StyleConflict,
+  type StyleFingerprint,
+} from "@kr8tiv/shared-schemas";
 import {
   analyzeMarket,
   assessFuturesContext,
@@ -27,37 +37,21 @@ import {
   buildStyleFingerprint,
   reconstructTrades,
 } from "@kr8tiv/style-engine";
-import {
-  AccountableTradePlanSchema,
-  ImportedTradeSchema,
-  type AccountabilityCheck,
-  type AccountableTradePlan,
-  type ImportedTrade,
-  type MarketScan,
-  type StyleConflict,
-  type StyleFingerprint,
-} from "@kr8tiv/shared-schemas";
-import { publicOnlyProvider, scanSymbols } from "./scan-signals.js";
-import {
-  startTelegramDispatcher,
-  type TelegramDispatcher,
-} from "./trader-app-telegram.js";
-import {
-  fetchAssetFundamentals,
-  type AssetFundamentalAssessment,
-} from "./fundamentals.js";
+import { type AssetFundamentalAssessment, fetchAssetFundamentals } from "./fundamentals.js";
+import { readFuturesAccountStatus } from "./futures-account-status.js";
 import { ingestFuturesHistory } from "./history-ingest.js";
+import { publicOnlyProvider, scanSymbols } from "./scan-signals.js";
+import { buildPastTradeAnalysis } from "./trade-history-analysis.js";
 import {
-  listStrategyEffectiveness,
   listRecentTradeFeedback,
+  listStrategyEffectiveness,
   readTraderSettings,
   recordBacktestComparison,
   recordTradeFeedback,
   saveTraderSettings,
   type TradeFeedbackAction,
 } from "./trader-app-state.js";
-import { buildPastTradeAnalysis } from "./trade-history-analysis.js";
-import { readFuturesAccountStatus } from "./futures-account-status.js";
+import { startTelegramDispatcher, type TelegramDispatcher } from "./trader-app-telegram.js";
 
 const HOST = process.env.TRADER_APP_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.TRADER_APP_PORT ?? 3020);
@@ -72,17 +66,11 @@ type ApiReviewResponse = {
   review: AccountabilityCheck;
   conflicts: StyleConflict[];
   savedId: number | null;
-  telegram:
-    | { chatId: number; messageId: number; status: "pending" }
-    | { error: string }
-    | null;
+  telegram: { chatId: number; messageId: number; status: "pending" } | { error: string } | null;
 };
 
 type ApiModelPlan = {
-  scan: Pick<
-    MarketScan,
-    "symbol" | "regime" | "currentPrice" | "warnings" | "strategies"
-  >;
+  scan: Pick<MarketScan, "symbol" | "regime" | "currentPrice" | "warnings" | "strategies">;
   plan: AccountableTradePlan;
   review: AccountabilityCheck;
   conflicts: StyleConflict[];
@@ -243,9 +231,7 @@ function loadFingerprints(symbols: readonly string[]): Map<string, StyleFingerpr
   return withDb((db) => {
     const trades = readImportedTradesForSymbols(db, symbols);
     const closed = reconstructTrades(trades);
-    return new Map(
-      symbols.map((symbol) => [symbol, buildStyleFingerprint(symbol, closed)]),
-    );
+    return new Map(symbols.map((symbol) => [symbol, buildStyleFingerprint(symbol, closed)]));
   });
 }
 
@@ -261,41 +247,27 @@ function conflictsForPlan(
   );
 }
 
-function handleReview(
-  body: unknown,
-  save: boolean,
-): ApiReviewResponse {
+function handleReview(body: unknown, save: boolean): ApiReviewResponse {
   const plan = AccountableTradePlanSchema.parse({
     ...(typeof body === "object" && body !== null ? body : {}),
     market: "mexc-futures",
   });
   const review = reviewTradePlan(plan);
   const fingerprints = loadFingerprints([plan.symbol]);
-  const conflicts = conflictsForPlan(
-    plan,
-    fingerprints.get(plan.symbol),
-    Date.now(),
-  );
+  const conflicts = conflictsForPlan(plan, fingerprints.get(plan.symbol), Date.now());
   const savedId = save
     ? withDb((db) =>
         saveTradeJournalEntry(db, plan, review, {
           conflicts,
-          approvalStatus:
-            dispatcher !== null && review.okToProceed ? "pending" : null,
+          approvalStatus: dispatcher !== null && review.okToProceed ? "pending" : null,
         }),
       )
     : null;
   return { plan, review, conflicts, savedId, telegram: null };
 }
 
-async function dispatchApprovalIfPossible(
-  response: ApiReviewResponse,
-): Promise<ApiReviewResponse> {
-  if (
-    response.savedId === null ||
-    !response.review.okToProceed ||
-    dispatcher === null
-  ) {
+async function dispatchApprovalIfPossible(response: ApiReviewResponse): Promise<ApiReviewResponse> {
+  if (response.savedId === null || !response.review.okToProceed || dispatcher === null) {
     return response;
   }
   try {
@@ -333,9 +305,7 @@ async function dispatchApprovalIfPossible(
 async function handleModelScan(url: URL): Promise<ApiModelScanResponse> {
   const requestedNotional = Number(url.searchParams.get("notional") ?? "12");
   const marginQuote =
-    Number.isFinite(requestedNotional) && requestedNotional > 0
-      ? requestedNotional
-      : 12;
+    Number.isFinite(requestedNotional) && requestedNotional > 0 ? requestedNotional : 12;
   const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
   const scans = await scanSymbols(client, {
     json: true,
@@ -359,11 +329,7 @@ async function handleModelScan(url: URL): Promise<ApiModelScanResponse> {
       },
       plan,
       review: reviewTradePlan(plan),
-      conflicts: conflictsForPlan(
-        plan,
-        fingerprints.get(plan.symbol),
-        generatedAtMs,
-      ),
+      conflicts: conflictsForPlan(plan, fingerprints.get(plan.symbol), generatedAtMs),
     })),
   );
   return { scans, plans, generatedAtMs };
@@ -462,9 +428,7 @@ async function handleGridPlan(url: URL): Promise<ApiGridPlanResponse> {
   };
 }
 
-async function handleGridCandidates(
-  url: URL,
-): Promise<ApiGridCandidatesResponse> {
+async function handleGridCandidates(url: URL): Promise<ApiGridCandidatesResponse> {
   const requestedLimit = Number(url.searchParams.get("limit") ?? "160");
   const limit =
     Number.isInteger(requestedLimit) && requestedLimit >= 80 && requestedLimit <= 500
@@ -527,14 +491,10 @@ async function handleMarketContext(): Promise<ApiMarketContextResponse> {
   };
 }
 
-async function tryFetchFundamentalsBySymbol(): Promise<
-  Map<string, AssetFundamentalAssessment>
-> {
+async function tryFetchFundamentalsBySymbol(): Promise<Map<string, AssetFundamentalAssessment>> {
   try {
     const response = await fetchAssetFundamentals();
-    return new Map(
-      response.assessments.map((assessment) => [assessment.symbol, assessment]),
-    );
+    return new Map(response.assessments.map((assessment) => [assessment.symbol, assessment]));
   } catch {
     // Fundamentals are a confirmation/veto layer, not the primary futures feed.
     // If CoinGecko is rate-limited or unavailable, keep the cockpit usable.
@@ -661,7 +621,11 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   }
 
   if (req.method === "GET" && url.pathname === "/api/settings") {
-    json(res, 200, withDb((db) => readTraderSettings(db)));
+    json(
+      res,
+      200,
+      withDb((db) => readTraderSettings(db)),
+    );
     return;
   }
 
@@ -669,7 +633,11 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       const payload = await readBody(req);
       const body = typeof payload === "object" && payload !== null ? payload : {};
-      json(res, 200, withDb((db) => saveTraderSettings(db, body)));
+      json(
+        res,
+        200,
+        withDb((db) => saveTraderSettings(db, body)),
+      );
     } catch (err) {
       json(res, 400, {
         error: "bad_settings",
@@ -722,7 +690,9 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       const body = typeof payload === "object" && payload !== null ? payload : {};
       const action = "action" in body ? body.action : null;
       if (typeof action !== "string" || !FEEDBACK_ACTIONS.has(action as TradeFeedbackAction)) {
-        throw new Error("feedback action must be one of took_trade/skipped_trade/broke_rules/review_later");
+        throw new Error(
+          "feedback action must be one of took_trade/skipped_trade/broke_rules/review_later",
+        );
       }
       const feedback = withDb((db) =>
         recordTradeFeedback(db, {
@@ -1273,7 +1243,7 @@ function renderApp(): string {
         </div>
         <div class="scan-controls">
           <button id="scan-model" type="button">Scan live BTC/ETH/SOL model</button>
-          <button id="run-backtest" type="button" class="secondary">Compare breakout vs grid edges</button>
+          <button id="run-backtest" type="button" class="secondary">Compare strategy edges</button>
           <button id="refresh-effectiveness" type="button" class="secondary">Refresh strategy memory</button>
           <button id="build-grid" type="button" class="secondary">Build futures grid plan</button>
           <button id="score-grid" type="button" class="secondary">Score grid candidates</button>
@@ -1406,7 +1376,7 @@ function renderApp(): string {
         </div>
         <div class="model-panel">
           <h3>Backtest lab</h3>
-          <div id="backtest-output" class="journal"><div class="empty">Run the backtest to compare breakout + trailing-stop vs adaptive futures grid on recent MEXC candles.</div></div>
+          <div id="backtest-output" class="journal"><div class="empty">Run the backtest to compare breakout, EMA pullback, Jarvis volume-profile, and adaptive futures grid on recent MEXC candles.</div></div>
         </div>
         <div class="model-panel">
           <h3>Strategy effectiveness memory</h3>
@@ -2491,9 +2461,7 @@ async function main(): Promise<void> {
   server.listen(PORT, HOST, () => {
     process.stdout.write(`Trader cockpit listening at http://${HOST}:${PORT}\n`);
     if (dispatcher !== null) {
-      process.stdout.write(
-        `Telegram approvals enabled for chat ${dispatcher.chatId}\n`,
-      );
+      process.stdout.write(`Telegram approvals enabled for chat ${dispatcher.chatId}\n`);
     }
   });
 

@@ -1,5 +1,6 @@
 import type { MarketCandle } from "@kr8tiv/shared-schemas";
 import { atr, ema, rsi } from "./indicators.js";
+import { buildVolumeProfile } from "./volume-profile.js";
 
 export type BacktestTrade = {
   direction: "long" | "short";
@@ -14,7 +15,8 @@ export type BacktestTrade = {
 export type BacktestStrategyName =
   | "breakout-trailing"
   | "adaptive-grid"
-  | "ema-pullback";
+  | "ema-pullback"
+  | "volume-profile";
 
 export type BreakoutBacktestOptions = {
   lookback?: number;
@@ -32,6 +34,14 @@ export type GridBacktestOptions = {
 
 export type EmaPullbackBacktestOptions = {
   lookback?: number;
+  riskMultipleTarget?: number;
+  feeRate?: number;
+};
+
+export type VolumeProfileBacktestOptions = {
+  lookback?: number;
+  binCount?: number;
+  entryBandPct?: number;
   riskMultipleTarget?: number;
   feeRate?: number;
 };
@@ -56,6 +66,10 @@ export type GridBacktestResult = StrategyBacktestResult & {
 
 export type EmaPullbackBacktestResult = StrategyBacktestResult & {
   strategy: "ema-pullback";
+};
+
+export type VolumeProfileBacktestResult = StrategyBacktestResult & {
+  strategy: "volume-profile";
 };
 
 export type StrategyBacktestComparison = {
@@ -83,11 +97,7 @@ function round(value: number, decimals = 6): number {
   return Math.round(value * factor) / factor;
 }
 
-function tradePnlPct(
-  position: OpenPosition,
-  exitPrice: number,
-  feeRate: number,
-): number {
+function tradePnlPct(position: OpenPosition, exitPrice: number, feeRate: number): number {
   const raw =
     position.direction === "long"
       ? (exitPrice - position.entryPrice) / position.entryPrice
@@ -142,16 +152,15 @@ export function backtestBreakoutTrailing(
   const trades: BacktestTrade[] = [];
 
   if (candles.length < lookback + 3) {
-    return summarize("breakout-trailing", [], [
-      "not enough candles for breakout backtest",
-    ]);
+    return summarize("breakout-trailing", [], ["not enough candles for breakout backtest"]);
   }
 
   const atrValues = atr(candles, 14);
   let position: OpenPosition | null = null;
 
   for (let i = lookback; i < candles.length; i += 1) {
-    const candle = candles[i]!;
+    const candle = candles[i];
+    if (!candle) continue;
 
     if (position) {
       const oneR =
@@ -168,16 +177,11 @@ export function backtestBreakoutTrailing(
           position.stopPrice = Math.max(position.stopPrice, position.entryPrice);
         }
         if (candle.high >= trailTrigger) {
-          position.stopPrice = Math.max(
-            position.stopPrice,
-            candle.high - position.riskDistance,
-          );
+          position.stopPrice = Math.max(position.stopPrice, candle.high - position.riskDistance);
         }
         if (candle.low <= position.stopPrice || candle.high >= position.targetPrice) {
           const exitPrice =
-            candle.high >= position.targetPrice
-              ? position.targetPrice
-              : position.stopPrice;
+            candle.high >= position.targetPrice ? position.targetPrice : position.stopPrice;
           trades.push({
             direction: "long",
             entryTimeMs: position.entryTimeMs,
@@ -194,16 +198,11 @@ export function backtestBreakoutTrailing(
           position.stopPrice = Math.min(position.stopPrice, position.entryPrice);
         }
         if (candle.low <= trailTrigger) {
-          position.stopPrice = Math.min(
-            position.stopPrice,
-            candle.low + position.riskDistance,
-          );
+          position.stopPrice = Math.min(position.stopPrice, candle.low + position.riskDistance);
         }
         if (candle.high >= position.stopPrice || candle.low <= position.targetPrice) {
           const exitPrice =
-            candle.low <= position.targetPrice
-              ? position.targetPrice
-              : position.stopPrice;
+            candle.low <= position.targetPrice ? position.targetPrice : position.stopPrice;
           trades.push({
             direction: "short",
             entryTimeMs: position.entryTimeMs,
@@ -224,10 +223,7 @@ export function backtestBreakoutTrailing(
     const support = Math.min(...prior.map((item) => item.low));
     const avgVolume = average(prior.map((item) => item.volume));
     const volumeRatio = avgVolume <= 0 ? 0 : candle.volume / avgVolume;
-    const riskDistance = Math.max(
-      atrValues[i] ?? candle.close * 0.004,
-      candle.close * 0.004,
-    );
+    const riskDistance = Math.max(atrValues[i] ?? candle.close * 0.004, candle.close * 0.004);
 
     if (candle.close > resistance * 1.001 && volumeRatio >= requiredVolumeRatio) {
       position = {
@@ -238,10 +234,7 @@ export function backtestBreakoutTrailing(
         targetPrice: candle.close + riskDistance * targetMultiple,
         riskDistance,
       };
-    } else if (
-      candle.close < support * 0.999 &&
-      volumeRatio >= requiredVolumeRatio
-    ) {
+    } else if (candle.close < support * 0.999 && volumeRatio >= requiredVolumeRatio) {
       position = {
         direction: "short",
         entryTimeMs: candle.closeTimeMs,
@@ -288,7 +281,8 @@ export function backtestAdaptiveGrid(
   let position: OpenPosition | null = null;
 
   for (let i = lookback; i < candles.length; i += 1) {
-    const candle = candles[i]!;
+    const candle = candles[i];
+    if (!candle) continue;
 
     if (position) {
       if (position.direction === "long") {
@@ -396,9 +390,7 @@ export function backtestEmaPullback(
   const trades: BacktestTrade[] = [];
 
   if (candles.length < Math.max(lookback, 55) + 3) {
-    return summarize("ema-pullback", [], [
-      "not enough candles for EMA pullback backtest",
-    ]);
+    return summarize("ema-pullback", [], ["not enough candles for EMA pullback backtest"]);
   }
 
   const closes = candles.map((candle) => candle.close);
@@ -409,7 +401,8 @@ export function backtestEmaPullback(
   let position: OpenPosition | null = null;
 
   for (let i = Math.max(lookback, 50); i < candles.length; i += 1) {
-    const candle = candles[i]!;
+    const candle = candles[i];
+    if (!candle) continue;
 
     if (position) {
       if (position.direction === "long") {
@@ -457,10 +450,7 @@ export function backtestEmaPullback(
     const fast = ema20[i] ?? candle.close;
     const slow = ema50[i] ?? candle.close;
     const momentum = rsi14[i] ?? 50;
-    const riskDistance = Math.max(
-      atr14[i] ?? candle.close * 0.005,
-      candle.close * 0.005,
-    );
+    const riskDistance = Math.max(atr14[i] ?? candle.close * 0.005, candle.close * 0.005);
 
     const bullishTrend = fast > slow && candle.close > slow;
     const bearishTrend = fast < slow && candle.close < slow;
@@ -515,6 +505,140 @@ export function backtestEmaPullback(
   return summarize("ema-pullback", trades, warnings);
 }
 
+export function backtestVolumeProfile(
+  candles: MarketCandle[],
+  options: VolumeProfileBacktestOptions = {},
+): VolumeProfileBacktestResult {
+  const lookback = options.lookback ?? 80;
+  const binCount = options.binCount ?? 24;
+  const entryBandPct = options.entryBandPct ?? 0.008;
+  const targetMultiple = options.riskMultipleTarget ?? 1.4;
+  const feeRate = options.feeRate ?? 0.0006;
+  const warnings: string[] = [];
+  const trades: BacktestTrade[] = [];
+
+  if (candles.length < lookback + 3) {
+    return summarize("volume-profile", [], ["not enough candles for volume-profile backtest"]);
+  }
+
+  const atr14 = atr(candles, 14);
+  let position: OpenPosition | null = null;
+
+  for (let i = lookback; i < candles.length; i += 1) {
+    const candle = candles[i];
+    if (!candle) continue;
+
+    if (position) {
+      if (position.direction === "long") {
+        const exitPrice =
+          candle.high >= position.targetPrice
+            ? position.targetPrice
+            : candle.low <= position.stopPrice
+              ? position.stopPrice
+              : null;
+        if (exitPrice !== null) {
+          trades.push({
+            direction: "long",
+            entryTimeMs: position.entryTimeMs,
+            exitTimeMs: candle.closeTimeMs,
+            entryPrice: position.entryPrice,
+            exitPrice,
+            pnlPct: tradePnlPct(position, exitPrice, feeRate),
+            exitReason: exitPrice === position.targetPrice ? "target" : "stop",
+          });
+          position = null;
+        }
+      } else {
+        const exitPrice =
+          candle.low <= position.targetPrice
+            ? position.targetPrice
+            : candle.high >= position.stopPrice
+              ? position.stopPrice
+              : null;
+        if (exitPrice !== null) {
+          trades.push({
+            direction: "short",
+            entryTimeMs: position.entryTimeMs,
+            exitTimeMs: candle.closeTimeMs,
+            entryPrice: position.entryPrice,
+            exitPrice,
+            pnlPct: tradePnlPct(position, exitPrice, feeRate),
+            exitReason: exitPrice === position.targetPrice ? "target" : "stop",
+          });
+          position = null;
+        }
+      }
+      continue;
+    }
+
+    const profile = buildVolumeProfile(candles.slice(i - lookback, i), {
+      lookback,
+      binCount,
+    });
+    if (!profile) continue;
+
+    const riskDistance = Math.max(
+      atr14[i] ?? candle.close * 0.005,
+      candle.close * 0.005,
+      candle.close * profile.binSizePct * 1.5,
+    );
+    const nearValueLow = candle.low <= profile.valueAreaLow * (1 + entryBandPct);
+    const nearValueHigh = candle.high >= profile.valueAreaHigh * (1 - entryBandPct);
+    const bullishBounce = nearValueLow && candle.close > candle.open;
+    const bearishReject = nearValueHigh && candle.close < candle.open;
+
+    if (bullishBounce && profile.pointOfControl > candle.close) {
+      const targetPrice = Math.max(
+        profile.pointOfControl,
+        candle.close + riskDistance * targetMultiple,
+      );
+      position = {
+        direction: "long",
+        entryTimeMs: candle.closeTimeMs,
+        entryPrice: candle.close,
+        stopPrice: Math.min(
+          profile.valueAreaLow - riskDistance * 0.35,
+          candle.close - riskDistance,
+        ),
+        targetPrice,
+        riskDistance,
+      };
+    } else if (bearishReject && profile.pointOfControl < candle.close) {
+      const targetPrice = Math.min(
+        profile.pointOfControl,
+        candle.close - riskDistance * targetMultiple,
+      );
+      position = {
+        direction: "short",
+        entryTimeMs: candle.closeTimeMs,
+        entryPrice: candle.close,
+        stopPrice: Math.max(
+          profile.valueAreaHigh + riskDistance * 0.35,
+          candle.close + riskDistance,
+        ),
+        targetPrice,
+        riskDistance,
+      };
+    }
+  }
+
+  const last = candles.at(-1);
+  if (position && last) {
+    trades.push({
+      direction: position.direction,
+      entryTimeMs: position.entryTimeMs,
+      exitTimeMs: last.closeTimeMs,
+      entryPrice: position.entryPrice,
+      exitPrice: last.close,
+      pnlPct: tradePnlPct(position, last.close, feeRate),
+      exitReason: "end",
+    });
+    warnings.push("last volume-profile position closed at final candle for reporting");
+  }
+
+  return summarize("volume-profile", trades, warnings);
+}
+
 function strategyScore(result: StrategyBacktestResult): number {
   const tradePenalty = result.trades.length === 0 ? 2 : 0;
   const profitFactorBonus = Math.min(result.profitFactor, 3) * 0.25;
@@ -525,17 +649,17 @@ export function compareBacktestStrategies(
   candles: MarketCandle[],
   options: BreakoutBacktestOptions &
     GridBacktestOptions &
-    EmaPullbackBacktestOptions = {},
+    EmaPullbackBacktestOptions &
+    VolumeProfileBacktestOptions = {},
 ): StrategyBacktestComparison {
   const breakout = backtestBreakoutTrailing(candles, options);
   const grid = backtestAdaptiveGrid(candles, options);
   const pullback = backtestEmaPullback(candles, options);
-  const results = [breakout, grid, pullback].sort(
+  const volumeProfile = backtestVolumeProfile(candles, options);
+  const results = [breakout, grid, pullback, volumeProfile].sort(
     (a, b) => strategyScore(b) - strategyScore(a),
   );
-  const best =
-    results.find((result) => result.trades.length > 0 && result.netPnlPct > 0) ??
-    null;
+  const best = results.find((result) => result.trades.length > 0 && result.netPnlPct > 0) ?? null;
 
   const recommendation =
     best?.strategy === "adaptive-grid"
@@ -544,7 +668,9 @@ export function compareBacktestStrategies(
         ? "momentum conditions are scoring better for breakout + trailing-stop planning"
         : best?.strategy === "ema-pullback"
           ? "medium-risk trend pullbacks are scoring better than breakout or grid"
-          : "No strategy edge is positive on this replay; protect capital and wait.";
+          : best?.strategy === "volume-profile"
+            ? "Jarvis-style volume profile levels are scoring best; respect POC/value-area support and resistance"
+            : "No strategy edge is positive on this replay; protect capital and wait.";
 
   return {
     results,
