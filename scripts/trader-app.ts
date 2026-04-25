@@ -1499,6 +1499,20 @@ function renderApp(): string {
           "<div class='empty'>No imported futures fills yet. Run <code>pnpm history:ingest --symbols 'BTCUSDT,ETHUSDT,SOLUSDT' --days 90</code>, then this panel becomes your personal trading mirror.</div>";
         return;
       }
+      const coaching = analysis.coaching || [];
+      const coachingHtml = coaching.length
+        ? "<article class='entry'>" +
+          "<div class='entry-head'><strong>Coaching flags</strong><span class='pill pending'>" + coaching.length + " active</span></div>" +
+          coaching.slice(0, 5).map((item) =>
+            "<div class='strategy-row'>" +
+              "<span class='pill " + (item.severity === "block" ? "block" : item.severity === "warn" ? "pending" : "info") + "'>" + escapeHtml(item.severity) + "</span>" +
+              "<span class='pill'>" + escapeHtml(item.scope) + "</span>" +
+              "<span class='pill'>" + escapeHtml(item.code) + "</span>" +
+              "<p><b>" + escapeHtml(item.message) + "</b><br>" + escapeHtml(item.suggestedAction) + "<br><small>" + escapeHtml(item.evidence) + "</small></p>" +
+            "</div>"
+          ).join("") +
+          "</article>"
+        : "<article class='entry'><div class='entry-head'><strong>Coaching flags</strong><span class='pill ok'>none</span></div><p>No strong personal leak detected yet. Keep logging trades so the mirror gets sharper.</p></article>";
       historyEl.innerHTML =
         "<article class='entry'>" +
           "<div class='entry-head'><strong>All MEXC futures history</strong><span class='pill " + (totals.netPnlQuote >= 0 ? "ok" : "block") + "'>" + money(totals.netPnlQuote) + "</span></div>" +
@@ -1509,6 +1523,7 @@ function renderApp(): string {
           "</div>" +
           "<p>Profit factor " + Number(totals.profitFactor || 0).toFixed(2) + " | fees " + Number(totals.feesQuote || 0).toFixed(2) + " USDT | avg closed trade " + money(totals.avgNetPnlQuote) + "</p>" +
         "</article>" +
+        coachingHtml +
         analysis.symbols.map((row) =>
           "<article class='entry'>" +
             "<div class='entry-head'><strong>" + escapeHtml(row.symbol) + "</strong><span class='pill " + (row.netPnlQuote >= 0 ? "ok" : "block") + "'>" + money(row.netPnlQuote) + "</span></div>" +

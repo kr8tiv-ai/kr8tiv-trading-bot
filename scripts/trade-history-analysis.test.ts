@@ -96,4 +96,61 @@ describe("buildPastTradeAnalysis", () => {
     expect(analysis.symbols).toHaveLength(3);
     expect(analysis.symbols.every((row) => row.closedTrades === 0)).toBe(true);
   });
+
+  it("emits coaching when one direction is clearly underperforming", () => {
+    const analysis = buildPastTradeAnalysis([
+      trade({
+        sourceTradeId: "btc-long-open-1",
+        symbol: "BTCUSDT",
+        side: "buy",
+        price: 100,
+        executedAtMs: Date.UTC(2026, 3, 20, 10, 0, 0),
+      }),
+      trade({
+        sourceTradeId: "btc-long-close-1",
+        symbol: "BTCUSDT",
+        side: "sell",
+        price: 94,
+        executedAtMs: Date.UTC(2026, 3, 20, 10, 10, 0),
+      }),
+      trade({
+        sourceTradeId: "btc-long-open-2",
+        symbol: "BTCUSDT",
+        side: "buy",
+        price: 100,
+        executedAtMs: Date.UTC(2026, 3, 20, 11, 0, 0),
+      }),
+      trade({
+        sourceTradeId: "btc-long-close-2",
+        symbol: "BTCUSDT",
+        side: "sell",
+        price: 96,
+        executedAtMs: Date.UTC(2026, 3, 20, 11, 12, 0),
+      }),
+      trade({
+        sourceTradeId: "btc-short-open",
+        symbol: "BTCUSDT",
+        side: "sell",
+        price: 100,
+        executedAtMs: Date.UTC(2026, 3, 20, 12, 0, 0),
+      }),
+      trade({
+        sourceTradeId: "btc-short-close",
+        symbol: "BTCUSDT",
+        side: "buy",
+        price: 90,
+        executedAtMs: Date.UTC(2026, 3, 20, 12, 15, 0),
+      }),
+    ]);
+
+    expect(analysis.coaching).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "direction-underperforming",
+          scope: "BTCUSDT",
+          suggestedAction: expect.stringContaining("BTCUSDT longs"),
+        }),
+      ]),
+    );
+  });
 });

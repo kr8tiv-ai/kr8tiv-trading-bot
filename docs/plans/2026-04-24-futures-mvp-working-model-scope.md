@@ -94,6 +94,13 @@ The Setup Board should be the cockpit's fast decision layer:
 - shows blockers first when the model, backtest, context, or personal style history disagrees
 - is advisory only; it should never place futures orders by itself
 
+The Past-trade panel should coach behavior, not just report stats:
+- flag symbol-level negative expectancy
+- flag long-vs-short direction underperformance
+- flag losses held much longer than winners
+- flag fee drag when churn eats the edge
+- translate each leak into a concrete next action, e.g. "avoid BTCUSDT longs unless context, backtest, and setup-board all agree"
+
 ## Required Local Product Loop
 
 The local app and CLI should support this loop:

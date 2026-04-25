@@ -31,10 +31,24 @@ export type SymbolTradeAnalysis = DirectionSummary & {
   fingerprint: StyleFingerprint;
 };
 
+export type CoachingInsight = {
+  code:
+    | "direction-underperforming"
+    | "symbol-negative-expectancy"
+    | "losses-held-too-long"
+    | "fees-eating-edge";
+  severity: "info" | "warn" | "block";
+  scope: string;
+  message: string;
+  evidence: string;
+  suggestedAction: string;
+};
+
 export type PastTradeAnalysis = {
   generatedAtMs: number;
   totals: Omit<SymbolTradeAnalysis, "symbol" | "fingerprint" | "long" | "short">;
   symbols: SymbolTradeAnalysis[];
+  coaching: CoachingInsight[];
 };
 
 function round(value: number, decimals = 8): number {
@@ -101,6 +115,87 @@ function summarizeSymbol(
   };
 }
 
+function buildCoachingInsights(symbols: SymbolTradeAnalysis[]): CoachingInsight[] {
+  const insights: CoachingInsight[] = [];
+
+  for (const row of symbols) {
+    if (row.closedTrades >= 3 && row.netPnlQuote < 0) {
+      insights.push({
+        code: "symbol-negative-expectancy",
+        severity: "warn",
+        scope: row.symbol,
+        message: `${row.symbol} is negative across the imported sample.`,
+        evidence: `closed=${row.closedTrades} net=${row.netPnlQuote.toFixed(2)} winRate=${(row.winRate * 100).toFixed(0)}%`,
+        suggestedAction: `Reduce ${row.symbol} size or require setup-board score >= 70 until this improves.`,
+      });
+    }
+
+    if (
+      row.long.closedTrades >= 2 &&
+      row.short.closedTrades >= 1 &&
+      row.long.avgNetPnlQuote < 0 &&
+      row.short.avgNetPnlQuote > row.long.avgNetPnlQuote
+    ) {
+      insights.push({
+        code: "direction-underperforming",
+        severity: "warn",
+        scope: row.symbol,
+        message: `${row.symbol} longs are underperforming shorts in your imported history.`,
+        evidence: `longAvg=${row.long.avgNetPnlQuote.toFixed(2)} shortAvg=${row.short.avgNetPnlQuote.toFixed(2)} longWin=${(row.long.winRate * 100).toFixed(0)}%`,
+        suggestedAction: `Avoid ${row.symbol} longs unless context, backtest, and setup-board all agree.`,
+      });
+    }
+
+    if (
+      row.short.closedTrades >= 2 &&
+      row.long.closedTrades >= 1 &&
+      row.short.avgNetPnlQuote < 0 &&
+      row.long.avgNetPnlQuote > row.short.avgNetPnlQuote
+    ) {
+      insights.push({
+        code: "direction-underperforming",
+        severity: "warn",
+        scope: row.symbol,
+        message: `${row.symbol} shorts are underperforming longs in your imported history.`,
+        evidence: `shortAvg=${row.short.avgNetPnlQuote.toFixed(2)} longAvg=${row.long.avgNetPnlQuote.toFixed(2)} shortWin=${(row.short.winRate * 100).toFixed(0)}%`,
+        suggestedAction: `Avoid ${row.symbol} shorts unless context, backtest, and setup-board all agree.`,
+      });
+    }
+
+    if (
+      row.fingerprint.sampleCount >= 4 &&
+      row.fingerprint.avgLossHoldTimeMs > row.fingerprint.avgWinHoldTimeMs * 1.8 &&
+      row.fingerprint.avgWinHoldTimeMs > 0
+    ) {
+      insights.push({
+        code: "losses-held-too-long",
+        severity: "warn",
+        scope: row.symbol,
+        message: `${row.symbol} losses are being held much longer than winners.`,
+        evidence: `avgLossHoldMin=${Math.round(row.fingerprint.avgLossHoldTimeMs / 60_000)} avgWinHoldMin=${Math.round(row.fingerprint.avgWinHoldTimeMs / 60_000)}`,
+        suggestedAction: "Pre-commit the stop and use panic/close discipline instead of waiting for rescue.",
+      });
+    }
+
+    const grossProfitAbs = Math.abs(row.grossProfitQuote);
+    if (row.closedTrades >= 3 && grossProfitAbs > 0 && row.feesQuote > grossProfitAbs * 0.25) {
+      insights.push({
+        code: "fees-eating-edge",
+        severity: "info",
+        scope: row.symbol,
+        message: `${row.symbol} fees are eating a large chunk of gross profits.`,
+        evidence: `fees=${row.feesQuote.toFixed(2)} grossProfit=${row.grossProfitQuote.toFixed(2)}`,
+        suggestedAction: "Trade fewer, cleaner setups or widen targets enough to pay fees.",
+      });
+    }
+  }
+
+  return insights.sort((a, b) => {
+    const rank = { block: 3, warn: 2, info: 1 };
+    return rank[b.severity] - rank[a.severity] || a.scope.localeCompare(b.scope);
+  });
+}
+
 export function buildPastTradeAnalysis(
   importedTrades: ImportedTrade[],
 ): PastTradeAnalysis {
@@ -142,5 +237,6 @@ export function buildPastTradeAnalysis(
         closedTrades.length > 0 ? Math.round(holdTimeMs / closedTrades.length) : 0,
     },
     symbols,
+    coaching: buildCoachingInsights(symbols),
   };
 }
