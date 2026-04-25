@@ -87,6 +87,13 @@ The Futures Context panel should make the market backdrop readable before Matt c
 - a crowding assessment (`longs_crowded`, `shorts_crowded`, or `balanced`)
 - a plain-English caution such as "avoid late long chases" when funding + basis look crowded
 
+The Setup Board should be the cockpit's fast decision layer:
+- one row per `BTCUSDT`, `ETHUSDT`, `SOLUSDT`
+- combines deterministic model setup, recent backtest winner, futures context, grid planner readiness, and style conflicts
+- returns `consider_long`, `consider_short`, or `wait`
+- shows blockers first when the model, backtest, context, or personal style history disagrees
+- is advisory only; it should never place futures orders by itself
+
 ## Required Local Product Loop
 
 The local app and CLI should support this loop:
@@ -108,7 +115,7 @@ pnpm signals:scan --style --symbols 'BTCUSDT,ETHUSDT,SOLUSDT'
 pnpm signals:watch --symbols 'BTCUSDT,ETHUSDT,SOLUSDT'
 pnpm model:scan --symbols 'BTCUSDT,ETHUSDT,SOLUSDT' --notional 12
 pnpm futures:status # requires mexc-futures-access + mexc-futures-secret WCM entries
-pnpm trade:app # local cockpit with quick trade controls, market context, model scan, grid planner, history analysis, and backtest lab
+pnpm trade:app # local cockpit with quick trade controls, setup board, market context, model scan, grid planner, history analysis, and backtest lab
 pnpm trade:review --symbol BTCUSDT --side long --horizon scalp --mode sniper --leverage 75 --margin 12 --entry 93500 --stop 93140 --target 94400 --why "15m reclaim with momentum confirmation after liquidity sweep" --note "planned, not revenge"
 pnpm trade:journal --symbol BTCUSDT --side long --horizon scalp --mode sniper --leverage 75 --margin 12 --entry 93500 --stop 93140 --target 94400 --why "15m reclaim with momentum confirmation after liquidity sweep" --note "planned, not revenge"
 ```

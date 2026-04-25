@@ -3,5 +3,6 @@ export * from "./context.js";
 export * from "./grid.js";
 export * from "./indicators.js";
 export * from "./model.js";
+export * from "./setup-board.js";
 export * from "./watch.js";
 export * from "./backtest.js";

@@ -14,8 +14,10 @@ import { createLogger } from "@kr8tiv/logger";
 import { MEXCFuturesClient } from "@kr8tiv/mexc-futures";
 import { WindowsCredentialManagerProvider } from "@kr8tiv/secrets";
 import {
+  analyzeMarket,
   assessFuturesContext,
   buildAdaptiveGridPlan,
+  buildSetupBoardRow,
   buildTradePlansFromScan,
   compareBacktestStrategies,
 } from "@kr8tiv/signal-engine";
@@ -105,6 +107,13 @@ type ApiMarketContextResponse = {
   generatedAtMs: number;
   contexts: Awaited<ReturnType<MEXCFuturesClient["fetchMarketContext"]>>[];
   assessments: ReturnType<typeof assessFuturesContext>[];
+};
+
+type ApiSetupBoardResponse = {
+  generatedAtMs: number;
+  interval: "Min15";
+  limit: number;
+  rows: Array<ReturnType<typeof buildSetupBoardRow>>;
 };
 
 const FEEDBACK_ACTIONS = new Set<TradeFeedbackAction>([
@@ -424,6 +433,74 @@ async function handleMarketContext(): Promise<ApiMarketContextResponse> {
   };
 }
 
+async function handleSetupBoard(url: URL): Promise<ApiSetupBoardResponse> {
+  const requestedLimit = Number(url.searchParams.get("limit") ?? "160");
+  const limit =
+    Number.isInteger(requestedLimit) && requestedLimit >= 80 && requestedLimit <= 500
+      ? requestedLimit
+      : 160;
+  const requestedLeverage = Number(url.searchParams.get("leverage") ?? "20");
+  const leverage =
+    Number.isFinite(requestedLeverage) && requestedLeverage >= 1 && requestedLeverage <= 100
+      ? requestedLeverage
+      : 20;
+  const requestedMargin = Number(url.searchParams.get("margin") ?? "25");
+  const marginQuote =
+    Number.isFinite(requestedMargin) && requestedMargin > 0 ? requestedMargin : 25;
+  const settings = withDb((db) => readTraderSettings(db));
+  const fingerprints = loadFingerprints(SUPPORTED_SYMBOLS);
+  const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
+  const generatedAtMs = Date.now();
+  const rows = await Promise.all(
+    SUPPORTED_SYMBOLS.map(async (symbol) => {
+      const [shortCandles, longCandles, context] = await Promise.all([
+        client.fetchCandles({ symbol, interval: "Min15", limit }),
+        client.fetchCandles({ symbol, interval: "Hour4", limit: Math.min(limit, 240) }),
+        client.fetchMarketContext(symbol),
+      ]);
+      const scan = analyzeMarket({
+        symbol,
+        market: "mexc-futures",
+        shortTimeframe: "15m",
+        longTimeframe: "4h",
+        shortCandles,
+        longCandles,
+        marketContext: context,
+      });
+      const comparison = compareBacktestStrategies(shortCandles, {
+        lookback: 20,
+        riskMultipleTarget: 2,
+        gridSpacingPct: 0.006,
+        feeRate: 0.0006,
+      });
+      const gridPlan = buildAdaptiveGridPlan({
+        symbol,
+        candles: shortCandles,
+        capitalQuote: settings.capitalBudgetQuote,
+        leverage,
+        riskMode: "medium",
+        gridCount: 6,
+      });
+      const styleConflictCount = buildStyleConflicts(
+        {
+          symbol,
+          generatedAtMs,
+          proposedNotionalQuote: marginQuote * leverage,
+        },
+        fingerprints.get(symbol),
+      ).length;
+      return buildSetupBoardRow({
+        scan,
+        comparison,
+        context: assessFuturesContext(context),
+        gridPlan,
+        styleConflictCount,
+      });
+    }),
+  );
+  return { generatedAtMs, interval: "Min15", limit, rows };
+}
+
 function countTodaysEntries(entries: TradeJournalEntry[]): number {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   return entries.filter((entry) => entry.createdAtMs >= cutoff).length;
@@ -563,6 +640,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     } catch (err) {
       json(res, 500, {
         error: "market_context_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/setup-board") {
+    try {
+      json(res, 200, await handleSetupBoard(url));
+    } catch (err) {
+      json(res, 500, {
+        error: "setup_board_failed",
         message: err instanceof Error ? err.message : String(err),
       });
     }
@@ -997,6 +1086,7 @@ function renderApp(): string {
           <button id="run-backtest" type="button" class="secondary">Compare breakout vs grid edges</button>
           <button id="build-grid" type="button" class="secondary">Build futures grid plan</button>
           <button id="refresh-context" type="button" class="secondary">Refresh funding + basis context</button>
+          <button id="refresh-setup-board" type="button" class="secondary">Score setup board</button>
           <label class="toggle">
             <input id="auto-poll" type="checkbox" checked>
             <span>Auto-refresh every 30s</span>
@@ -1113,6 +1203,10 @@ function renderApp(): string {
           <p class="lede">Fill the trade, then make the bot argue with you before you size it. If Telegram is configured, a "Review + save + Telegram" press also sends you the card to approve on your phone.</p>
         </div>
         <div class="model-panel">
+          <h3>Setup board</h3>
+          <div id="setup-board-output" class="journal"><div class="empty">Scoring BTC/ETH/SOL setups across model, backtest, context, grid, and style conflicts...</div></div>
+        </div>
+        <div class="model-panel">
           <h3>Backtest lab</h3>
           <div id="backtest-output" class="journal"><div class="empty">Run the backtest to compare breakout + trailing-stop vs adaptive futures grid on recent MEXC candles.</div></div>
         </div>
@@ -1152,6 +1246,7 @@ function renderApp(): string {
     const journalEl = document.querySelector("#journal");
     const historyEl = document.querySelector("#history-analysis");
     const modelEl = document.querySelector("#model-output");
+    const setupBoardEl = document.querySelector("#setup-board-output");
     const backtestEl = document.querySelector("#backtest-output");
     const gridEl = document.querySelector("#grid-output");
     const contextEl = document.querySelector("#context-output");
@@ -1160,6 +1255,7 @@ function renderApp(): string {
     const runBacktestButton = document.querySelector("#run-backtest");
     const buildGridButton = document.querySelector("#build-grid");
     const refreshContextButton = document.querySelector("#refresh-context");
+    const refreshSetupBoardButton = document.querySelector("#refresh-setup-board");
     const saveSettingsButton = document.querySelector("#save-settings");
     const autoPollToggle = document.querySelector("#auto-poll");
     const scanMetaEl = document.querySelector("#scan-meta");
@@ -1539,6 +1635,24 @@ function renderApp(): string {
         }).join("");
     }
 
+    function renderSetupBoard(data) {
+      const stamp = data.generatedAtMs ? new Date(data.generatedAtMs).toLocaleTimeString() : "";
+      setupBoardEl.innerHTML =
+        "<div class='model-meta'><span>setup board " + escapeHtml(stamp) + " · " + data.limit + " candles</span></div>" +
+        data.rows.map((row) => {
+          const actionClass = row.action === "wait" ? "block" : row.action === "consider_long" ? "ok" : "pending";
+          const blockers = row.blockers ?? [];
+          const notes = row.notes ?? [];
+          return "<article class='entry'>" +
+            "<div class='entry-head'><strong>" + escapeHtml(row.symbol) + " " + escapeHtml(row.action.replace("_", " ").toUpperCase()) + "</strong><span class='pill " + actionClass + "'>" + row.score + "/100</span></div>" +
+            "<p><span class='pill'>" + escapeHtml(row.primaryDirection) + "</span> <span class='pill'>" + escapeHtml(row.primaryStrategy || "no setup") + "</span> <span class='pill'>best " + escapeHtml(row.bestBacktestStrategy || "none") + "</span> <span class='pill'>context " + escapeHtml(row.contextBias) + " " + row.contextScore + "/100</span> <span class='pill'>grid " + row.gridLevelCount + " levels</span> <span class='pill'>style " + row.styleConflictCount + "</span></p>" +
+            (row.backtestNetPnlPct !== null ? "<p>Recent best backtest net: " + Number(row.backtestNetPnlPct || 0).toFixed(2) + "%</p>" : "<p>Recent best backtest net: no positive edge</p>") +
+            (blockers.length ? "<p><b>Blockers:</b> " + blockers.map(escapeHtml).join(" | ") + "</p>" : "") +
+            (notes.length ? "<ul>" + notes.slice(0, 4).map((note) => "<li>" + escapeHtml(note) + "</li>").join("") + "</ul>" : "") +
+          "</article>";
+        }).join("");
+    }
+
     async function loadJournal() {
       const res = await fetch("/api/journal");
       const body = await res.json();
@@ -1601,6 +1715,19 @@ function renderApp(): string {
         return;
       }
       renderMarketContext(body);
+    }
+
+    async function loadSetupBoard() {
+      const payload = formPayload();
+      const margin = encodeURIComponent(payload.marginQuote || 25);
+      const leverage = encodeURIComponent(payload.leverage || 20);
+      const res = await fetch("/api/setup-board?limit=160&margin=" + margin + "&leverage=" + leverage);
+      const body = await res.json();
+      if (!res.ok) {
+        setupBoardEl.innerHTML = "<div class='empty'>Setup board failed: " + escapeHtml(body.message) + "</div>";
+        return;
+      }
+      renderSetupBoard(body);
     }
 
     async function runModelScan(reason) {
@@ -1743,6 +1870,13 @@ function renderApp(): string {
       });
     });
 
+    refreshSetupBoardButton.addEventListener("click", () => {
+      setupBoardEl.innerHTML = "<div class='empty'>Scoring setup board from live candles, backtests, context, and style history...</div>";
+      loadSetupBoard().catch((err) => {
+        setupBoardEl.innerHTML = "<div class='empty'>Setup board failed: " + escapeHtml(String(err)) + "</div>";
+      });
+    });
+
     loadJournal().catch((err) => {
       journalEl.innerHTML = "<div class='empty'>Journal load failed: " + String(err) + "</div>";
     });
@@ -1758,6 +1892,9 @@ function renderApp(): string {
     });
     loadMarketContext().catch((err) => {
       contextEl.innerHTML = "<div class='empty'>Market context failed: " + escapeHtml(String(err)) + "</div>";
+    });
+    loadSetupBoard().catch((err) => {
+      setupBoardEl.innerHTML = "<div class='empty'>Setup board failed: " + escapeHtml(String(err)) + "</div>";
     });
 
     // Kick off the auto-poll loop immediately — this is the product: live signals streamed into the cockpit.
