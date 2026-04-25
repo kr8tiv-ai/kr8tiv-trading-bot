@@ -14,6 +14,7 @@ import { createLogger } from "@kr8tiv/logger";
 import { MEXCFuturesClient } from "@kr8tiv/mexc-futures";
 import { WindowsCredentialManagerProvider } from "@kr8tiv/secrets";
 import {
+  assessFuturesContext,
   buildAdaptiveGridPlan,
   buildTradePlansFromScan,
   compareBacktestStrategies,
@@ -98,6 +99,12 @@ type ApiGridPlanResponse = {
   interval: "Min15";
   limit: number;
   plans: Array<ReturnType<typeof buildAdaptiveGridPlan>>;
+};
+
+type ApiMarketContextResponse = {
+  generatedAtMs: number;
+  contexts: Awaited<ReturnType<MEXCFuturesClient["fetchMarketContext"]>>[];
+  assessments: ReturnType<typeof assessFuturesContext>[];
 };
 
 const FEEDBACK_ACTIONS = new Set<TradeFeedbackAction>([
@@ -405,6 +412,18 @@ async function handleGridPlan(url: URL): Promise<ApiGridPlanResponse> {
   };
 }
 
+async function handleMarketContext(): Promise<ApiMarketContextResponse> {
+  const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
+  const contexts = await Promise.all(
+    SUPPORTED_SYMBOLS.map((symbol) => client.fetchMarketContext(symbol)),
+  );
+  return {
+    generatedAtMs: Date.now(),
+    contexts,
+    assessments: contexts.map((context) => assessFuturesContext(context)),
+  };
+}
+
 function countTodaysEntries(entries: TradeJournalEntry[]): number {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   return entries.filter((entry) => entry.createdAtMs >= cutoff).length;
@@ -532,6 +551,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     } catch (err) {
       json(res, 500, {
         error: "grid_plan_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/market-context") {
+    try {
+      json(res, 200, await handleMarketContext());
+    } catch (err) {
+      json(res, 500, {
+        error: "market_context_failed",
         message: err instanceof Error ? err.message : String(err),
       });
     }
@@ -965,6 +996,7 @@ function renderApp(): string {
           <button id="scan-model" type="button">Scan live BTC/ETH/SOL model</button>
           <button id="run-backtest" type="button" class="secondary">Compare breakout vs grid edges</button>
           <button id="build-grid" type="button" class="secondary">Build futures grid plan</button>
+          <button id="refresh-context" type="button" class="secondary">Refresh funding + basis context</button>
           <label class="toggle">
             <input id="auto-poll" type="checkbox" checked>
             <span>Auto-refresh every 30s</span>
@@ -1089,6 +1121,10 @@ function renderApp(): string {
           <div id="grid-output" class="journal"><div class="empty">Build a medium-risk futures grid plan for BTC, ETH, and SOL using your saved capital rules. Planner only; no live grid orders fire.</div></div>
         </div>
         <div class="model-panel">
+          <h3>Futures context</h3>
+          <div id="context-output" class="journal"><div class="empty">Loading funding, basis, volume, and open-interest context...</div></div>
+        </div>
+        <div class="model-panel">
           <h3>Live model drafts</h3>
           <div id="model-output" class="journal"><div class="empty">Run the live model scan to pull MEXC futures structure.</div></div>
         </div>
@@ -1118,10 +1154,12 @@ function renderApp(): string {
     const modelEl = document.querySelector("#model-output");
     const backtestEl = document.querySelector("#backtest-output");
     const gridEl = document.querySelector("#grid-output");
+    const contextEl = document.querySelector("#context-output");
     const feedbackEl = document.querySelector("#feedback-log");
     const scanModelButton = document.querySelector("#scan-model");
     const runBacktestButton = document.querySelector("#run-backtest");
     const buildGridButton = document.querySelector("#build-grid");
+    const refreshContextButton = document.querySelector("#refresh-context");
     const saveSettingsButton = document.querySelector("#save-settings");
     const autoPollToggle = document.querySelector("#auto-poll");
     const scanMetaEl = document.querySelector("#scan-meta");
@@ -1328,6 +1366,10 @@ function renderApp(): string {
       return (Number(value || 0) * 100).toFixed(0) + "%";
     }
 
+    function tinyPct(value) {
+      return (Number(value || 0) * 100).toFixed(3) + "%";
+    }
+
     function money(value) {
       const n = Number(value || 0);
       return (n >= 0 ? "+" : "") + n.toFixed(2) + " USDT";
@@ -1479,6 +1521,24 @@ function renderApp(): string {
         }).join("");
     }
 
+    function renderMarketContext(data) {
+      const stamp = data.generatedAtMs ? new Date(data.generatedAtMs).toLocaleTimeString() : "";
+      contextEl.innerHTML =
+        "<div class='model-meta'><span>funding + basis snapshot " + escapeHtml(stamp) + "</span></div>" +
+        data.assessments.map((assessment) => {
+          const context = (data.contexts ?? []).find((item) => item.symbol === assessment.symbol) || {};
+          const biasClass = assessment.bias === "long" ? "ok" : assessment.bias === "short" ? "pending" : "info";
+          return "<article class='entry'>" +
+            "<div class='entry-head'><strong>" + escapeHtml(assessment.symbol) + " context</strong><span class='pill " + biasClass + "'>" + escapeHtml(assessment.bias) + " bias · " + assessment.score + "/100</span></div>" +
+            "<p><span class='pill'>" + escapeHtml(assessment.crowding) + "</span> <span class='pill'>funding " + tinyPct(assessment.fundingRate) + "</span> <span class='pill'>basis " + tinyPct(assessment.basisPct) + "</span> <span class='pill'>24h " + tinyPct(assessment.riseFallRate) + "</span></p>" +
+            "<p>Price " + Number(context.lastPrice || 0).toFixed(assessment.symbol === "SOLUSDT" ? 4 : 2) +
+            " · fair/index " + Number(context.fairPrice || 0).toFixed(assessment.symbol === "SOLUSDT" ? 4 : 2) + " / " + Number(context.indexPrice || 0).toFixed(assessment.symbol === "SOLUSDT" ? 4 : 2) +
+            " · holdVol " + Number(assessment.holdVol || 0).toLocaleString() + " · amount24 " + Number(assessment.amount24 || 0).toLocaleString() + "</p>" +
+            "<ul>" + assessment.notes.map((note) => "<li>" + escapeHtml(note) + "</li>").join("") + "</ul>" +
+          "</article>";
+        }).join("");
+    }
+
     async function loadJournal() {
       const res = await fetch("/api/journal");
       const body = await res.json();
@@ -1531,6 +1591,16 @@ function renderApp(): string {
       const res = await fetch("/api/history-analysis");
       const body = await res.json();
       renderHistoryAnalysis(body);
+    }
+
+    async function loadMarketContext() {
+      const res = await fetch("/api/market-context");
+      const body = await res.json();
+      if (!res.ok) {
+        contextEl.innerHTML = "<div class='empty'>Market context failed: " + escapeHtml(body.message) + "</div>";
+        return;
+      }
+      renderMarketContext(body);
     }
 
     async function runModelScan(reason) {
@@ -1666,6 +1736,13 @@ function renderApp(): string {
       }
     });
 
+    refreshContextButton.addEventListener("click", () => {
+      contextEl.innerHTML = "<div class='empty'>Refreshing MEXC futures context...</div>";
+      loadMarketContext().catch((err) => {
+        contextEl.innerHTML = "<div class='empty'>Market context failed: " + escapeHtml(String(err)) + "</div>";
+      });
+    });
+
     loadJournal().catch((err) => {
       journalEl.innerHTML = "<div class='empty'>Journal load failed: " + String(err) + "</div>";
     });
@@ -1678,6 +1755,9 @@ function renderApp(): string {
 
     loadHistoryAnalysis().catch((err) => {
       historyEl.innerHTML = "<div class='empty'>History analysis failed: " + escapeHtml(String(err)) + "</div>";
+    });
+    loadMarketContext().catch((err) => {
+      contextEl.innerHTML = "<div class='empty'>Market context failed: " + escapeHtml(String(err)) + "</div>";
     });
 
     // Kick off the auto-poll loop immediately — this is the product: live signals streamed into the cockpit.

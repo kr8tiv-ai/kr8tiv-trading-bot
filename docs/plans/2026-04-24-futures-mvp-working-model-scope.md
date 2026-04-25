@@ -78,6 +78,15 @@ The Grid Planner is separate from live execution. It should:
 - refuse to invent levels when the range is compressed, the budget is invalid, or leverage makes the plan unsafe
 - remain decision-support only until a later phase explicitly designs live grid execution
 
+The Futures Context panel should make the market backdrop readable before Matt clicks into a trade:
+- funding rate
+- fair/index basis
+- 24h rise/fall
+- 24h amount
+- MEXC holdVol/open-interest-ish pressure
+- a crowding assessment (`longs_crowded`, `shorts_crowded`, or `balanced`)
+- a plain-English caution such as "avoid late long chases" when funding + basis look crowded
+
 ## Required Local Product Loop
 
 The local app and CLI should support this loop:
@@ -99,7 +108,7 @@ pnpm signals:scan --style --symbols 'BTCUSDT,ETHUSDT,SOLUSDT'
 pnpm signals:watch --symbols 'BTCUSDT,ETHUSDT,SOLUSDT'
 pnpm model:scan --symbols 'BTCUSDT,ETHUSDT,SOLUSDT' --notional 12
 pnpm futures:status # requires mexc-futures-access + mexc-futures-secret WCM entries
-pnpm trade:app # local cockpit with quick trade controls, model scan, grid planner, history analysis, and backtest lab
+pnpm trade:app # local cockpit with quick trade controls, market context, model scan, grid planner, history analysis, and backtest lab
 pnpm trade:review --symbol BTCUSDT --side long --horizon scalp --mode sniper --leverage 75 --margin 12 --entry 93500 --stop 93140 --target 94400 --why "15m reclaim with momentum confirmation after liquidity sweep" --note "planned, not revenge"
 pnpm trade:journal --symbol BTCUSDT --side long --horizon scalp --mode sniper --leverage 75 --margin 12 --entry 93500 --stop 93140 --target 94400 --why "15m reclaim with momentum confirmation after liquidity sweep" --note "planned, not revenge"
 ```
