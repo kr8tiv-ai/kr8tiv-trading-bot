@@ -49,6 +49,7 @@ import {
   type TradeFeedbackAction,
 } from "./trader-app-state.js";
 import { buildPastTradeAnalysis } from "./trade-history-analysis.js";
+import { readFuturesAccountStatus } from "./futures-account-status.js";
 
 const HOST = process.env.TRADER_APP_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.TRADER_APP_PORT ?? 3020);
@@ -524,6 +525,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       app: "kr8tiv-trader-cockpit",
       telegram: dispatcher !== null ? { chatId: dispatcher.chatId } : null,
     });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/account-status") {
+    try {
+      json(res, 200, await readFuturesAccountStatus());
+    } catch (err) {
+      json(res, 500, {
+        error: "account_status_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
     return;
   }
 
@@ -1225,8 +1238,16 @@ function renderApp(): string {
       </div>
 
       <aside class="plate card">
+        <h2>Live account</h2>
+        <div id="account-status" class="journal"><div class="empty">Loading read-only MEXC futures account status...</div></div>
+        <div class="quick-row" style="margin-top:10px">
+          <button id="refresh-account" class="chip" type="button">Refresh account</button>
+        </div>
+
+        <div class="model-panel">
         <h2>Past-trade analysis</h2>
         <div id="history-analysis" class="journal"><div class="empty">Loading imported MEXC futures history...</div></div>
+        </div>
 
         <div class="model-panel">
         <h2>Recent journal</h2>
@@ -1244,6 +1265,7 @@ function renderApp(): string {
     const form = document.querySelector("#trade-form");
     const verdictEl = document.querySelector("#verdict");
     const journalEl = document.querySelector("#journal");
+    const accountEl = document.querySelector("#account-status");
     const historyEl = document.querySelector("#history-analysis");
     const modelEl = document.querySelector("#model-output");
     const setupBoardEl = document.querySelector("#setup-board-output");
@@ -1256,6 +1278,7 @@ function renderApp(): string {
     const buildGridButton = document.querySelector("#build-grid");
     const refreshContextButton = document.querySelector("#refresh-context");
     const refreshSetupBoardButton = document.querySelector("#refresh-setup-board");
+    const refreshAccountButton = document.querySelector("#refresh-account");
     const saveSettingsButton = document.querySelector("#save-settings");
     const autoPollToggle = document.querySelector("#auto-poll");
     const scanMetaEl = document.querySelector("#scan-meta");
@@ -1650,6 +1673,37 @@ function renderApp(): string {
         }).join("");
     }
 
+    function renderAccountStatus(status) {
+      if (!status.available) {
+        accountEl.innerHTML =
+          "<article class='entry'><div class='entry-head'><strong>Futures account</strong><span class='pill pending'>read-only unavailable</span></div>" +
+          "<p>" + escapeHtml(status.message || "Missing futures credentials.") + "</p>" +
+          "<p><span class='pill'>safe mode</span> Signals, backtests, setup board, and journal still work.</p></article>";
+        return;
+      }
+      const s = status.snapshot;
+      const positions = s.positions || [];
+      accountEl.innerHTML =
+        "<article class='entry'>" +
+          "<div class='entry-head'><strong>USDT margin</strong><span class='pill ok'>connected</span></div>" +
+          "<div class='metric-row'>" +
+            "<div class='metric'><small>Total</small><b>" + Number(s.usdt.total || 0).toFixed(2) + "</b></div>" +
+            "<div class='metric'><small>Free</small><b>" + Number(s.usdt.free || 0).toFixed(2) + "</b></div>" +
+            "<div class='metric'><small>Used</small><b>" + Number(s.usdt.used || 0).toFixed(2) + "</b></div>" +
+          "</div>" +
+          "<p>Fetched " + new Date(s.fetchedAtMs || Date.now()).toLocaleTimeString() + "</p>" +
+        "</article>" +
+        (positions.length
+          ? positions.map((p) =>
+              "<article class='entry'>" +
+                "<div class='entry-head'><strong>" + escapeHtml(p.symbol) + " " + escapeHtml(String(p.side).toUpperCase()) + "</strong><span class='pill " + (Number(p.unrealizedPnl || 0) >= 0 ? "ok" : "block") + "'>" + money(p.unrealizedPnl) + "</span></div>" +
+                "<p><span class='pill'>" + Number(p.leverage || 0).toFixed(0) + "x</span> <span class='pill'>notional " + Number(p.notionalQuote || 0).toFixed(2) + "</span> <span class='pill'>entry " + Number(p.entryPrice || 0).toFixed(4) + "</span> <span class='pill'>mark " + Number(p.markPrice || 0).toFixed(4) + "</span></p>" +
+                (p.liquidationPrice ? "<p><span class='pill block'>liq " + Number(p.liquidationPrice || 0).toFixed(4) + "</span> <span class='pill'>" + escapeHtml(p.marginMode || "margin") + "</span></p>" : "") +
+              "</article>"
+            ).join("")
+          : "<article class='entry'><div class='entry-head'><strong>Open positions</strong><span class='pill ok'>flat</span></div><p>No BTC/ETH/SOL futures positions reported.</p></article>");
+    }
+
     function renderSetupBoard(data) {
       const stamp = data.generatedAtMs ? new Date(data.generatedAtMs).toLocaleTimeString() : "";
       setupBoardEl.innerHTML =
@@ -1730,6 +1784,16 @@ function renderApp(): string {
         return;
       }
       renderMarketContext(body);
+    }
+
+    async function loadAccountStatus() {
+      const res = await fetch("/api/account-status");
+      const body = await res.json();
+      if (!res.ok) {
+        accountEl.innerHTML = "<div class='empty'>Account status failed: " + escapeHtml(body.message) + "</div>";
+        return;
+      }
+      renderAccountStatus(body);
     }
 
     async function loadSetupBoard() {
@@ -1892,6 +1956,13 @@ function renderApp(): string {
       });
     });
 
+    refreshAccountButton.addEventListener("click", () => {
+      accountEl.innerHTML = "<div class='empty'>Refreshing read-only futures account status...</div>";
+      loadAccountStatus().catch((err) => {
+        accountEl.innerHTML = "<div class='empty'>Account status failed: " + escapeHtml(String(err)) + "</div>";
+      });
+    });
+
     loadJournal().catch((err) => {
       journalEl.innerHTML = "<div class='empty'>Journal load failed: " + String(err) + "</div>";
     });
@@ -1900,6 +1971,9 @@ function renderApp(): string {
     });
     loadFeedback().catch((err) => {
       feedbackEl.innerHTML = "<div class='empty'>Feedback load failed: " + escapeHtml(String(err)) + "</div>";
+    });
+    loadAccountStatus().catch((err) => {
+      accountEl.innerHTML = "<div class='empty'>Account status failed: " + escapeHtml(String(err)) + "</div>";
     });
 
     loadHistoryAnalysis().catch((err) => {

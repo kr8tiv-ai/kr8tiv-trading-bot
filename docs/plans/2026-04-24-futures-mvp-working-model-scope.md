@@ -94,6 +94,12 @@ The Setup Board should be the cockpit's fast decision layer:
 - shows blockers first when the model, backtest, context, or personal style history disagrees
 - is advisory only; it should never place futures orders by itself
 
+The Live Account panel should be read-only at first:
+- show futures USDT total/free/used when MEXC futures credentials exist
+- show open futures positions with side, leverage, notional, entry, mark, liquidation, margin mode, and unrealized PnL
+- fail safe when credentials are missing by explaining which WCM entries are required
+- never place, modify, or close positions from the panel; panic and execution stay explicit commands until the risk model is proven
+
 The Past-trade panel should coach behavior, not just report stats:
 - flag symbol-level negative expectancy
 - flag long-vs-short direction underperformance
