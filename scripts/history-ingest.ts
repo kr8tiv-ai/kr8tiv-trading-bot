@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { closeDatabase, openDatabase } from "@kr8tiv/db";
 import { applySchema } from "@kr8tiv/executor";
 import {
@@ -10,7 +12,7 @@ import type { ImportedTrade } from "@kr8tiv/shared-schemas";
 
 const log = logger.child({ cmd: "history-ingest" });
 
-type Options = {
+export type HistoryIngestOptions = {
   symbols: string[];
   days: number;
   limit: number;
@@ -18,7 +20,7 @@ type Options = {
   json: boolean;
 };
 
-type SymbolReport = {
+export type HistoryIngestSymbolReport = {
   symbol: string;
   fetched: number;
   insertedOrUpdated: number;
@@ -38,8 +40,8 @@ function usage(): never {
   );
 }
 
-function parseArgs(argv: string[]): Options {
-  const options: Options = {
+export function parseHistoryIngestArgs(argv: string[]): HistoryIngestOptions {
+  const options: HistoryIngestOptions = {
     symbols: [...SUPPORTED_FUTURES_SIGNAL_SYMBOLS],
     days: 60,
     limit: 100,
@@ -122,11 +124,11 @@ function upsertTrade(db: ReturnType<typeof openDatabase>, trade: ImportedTrade):
 async function ingestSymbol(
   client: MEXCFuturesClient,
   db: ReturnType<typeof openDatabase>,
-  options: Options,
+  options: HistoryIngestOptions,
   symbol: string,
-): Promise<SymbolReport> {
+): Promise<HistoryIngestSymbolReport> {
   let since = Date.now() - options.days * 24 * 60 * 60 * 1000;
-  const report: SymbolReport = {
+  const report: HistoryIngestSymbolReport = {
     symbol,
     fetched: 0,
     insertedOrUpdated: 0,
@@ -171,36 +173,59 @@ async function ingestSymbol(
   return report;
 }
 
-async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2));
+export async function ingestFuturesHistory(
+  partial: Partial<HistoryIngestOptions> = {},
+): Promise<HistoryIngestSymbolReport[]> {
+  const options: HistoryIngestOptions = {
+    symbols: partial.symbols ?? [...SUPPORTED_FUTURES_SIGNAL_SYMBOLS],
+    days: partial.days ?? 60,
+    limit: partial.limit ?? 100,
+    maxPages: partial.maxPages ?? 20,
+    json: partial.json ?? false,
+  };
+  for (const symbol of options.symbols) {
+    if (!SUPPORTED_FUTURES_SIGNAL_SYMBOLS.includes(symbol as never)) {
+      throw new Error(`unsupported futures symbol: ${symbol}`);
+    }
+  }
   const db = openDatabase();
   try {
     applySchema(db);
     const client = await MEXCFuturesClient.create({
       secrets: new WindowsCredentialManagerProvider(),
     });
-    const reports: SymbolReport[] = [];
+    const reports: HistoryIngestSymbolReport[] = [];
     for (const symbol of options.symbols) {
       reports.push(await ingestSymbol(client, db, options, symbol));
     }
-
-    if (options.json) {
-      process.stdout.write(`${JSON.stringify(reports, null, 2)}\n`);
-    } else {
-      process.stdout.write("Futures history ingest complete\n");
-      for (const report of reports) {
-        process.stdout.write(
-          `${report.symbol}: ${report.insertedOrUpdated} rows across ${report.pages} page(s)\n`,
-        );
-      }
-    }
+    return reports;
   } finally {
     closeDatabase(db);
   }
 }
 
-main().catch((err) => {
-  log.fatal({ err }, "history ingest failed");
-  process.stderr.write(`${String(err)}\n`);
-  process.exit(1);
-});
+async function main(): Promise<void> {
+  const options = parseHistoryIngestArgs(process.argv.slice(2));
+  const reports = await ingestFuturesHistory(options);
+
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(reports, null, 2)}\n`);
+  } else {
+    process.stdout.write("Futures history ingest complete\n");
+    for (const report of reports) {
+      process.stdout.write(
+        `${report.symbol}: ${report.insertedOrUpdated} rows across ${report.pages} page(s)\n`,
+      );
+    }
+  }
+}
+
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
+const modulePath = fileURLToPath(import.meta.url);
+if (invokedPath === modulePath) {
+  main().catch((err) => {
+    log.fatal({ err }, "history ingest failed");
+    process.stderr.write(`${String(err)}\n`);
+    process.exit(1);
+  });
+}

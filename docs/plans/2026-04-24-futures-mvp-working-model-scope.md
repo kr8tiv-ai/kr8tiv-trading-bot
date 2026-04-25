@@ -107,6 +107,7 @@ The Live Account panel should be read-only at first:
 - never place, modify, or close positions from the panel; panic and execution stay explicit commands until the risk model is proven
 
 The Past-trade panel should coach behavior, not just report stats:
+- provide a one-click read-only import for recent BTC/ETH/SOL MEXC futures fills when futures credentials are configured
 - flag symbol-level negative expectancy
 - flag long-vs-short direction underperformance
 - flag losses held much longer than winners

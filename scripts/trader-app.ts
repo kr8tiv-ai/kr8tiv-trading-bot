@@ -42,6 +42,7 @@ import {
   startTelegramDispatcher,
   type TelegramDispatcher,
 } from "./trader-app-telegram.js";
+import { ingestFuturesHistory } from "./history-ingest.js";
 import {
   listStrategyEffectiveness,
   listRecentTradeFeedback,
@@ -647,6 +648,36 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     } catch (err) {
       json(res, 400, {
         error: "bad_settings",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/history-ingest") {
+    try {
+      const payload = await readBody(req);
+      const body = typeof payload === "object" && payload !== null ? payload : {};
+      const requestedDays = Number((body as { days?: unknown }).days ?? 60);
+      const days =
+        Number.isInteger(requestedDays) && requestedDays >= 1 && requestedDays <= 365
+          ? requestedDays
+          : 60;
+      const reports = await ingestFuturesHistory({
+        symbols: [...SUPPORTED_SYMBOLS],
+        days,
+        limit: 100,
+        maxPages: 5,
+        json: true,
+      });
+      json(res, 200, {
+        generatedAtMs: Date.now(),
+        days,
+        reports,
+      });
+    } catch (err) {
+      json(res, 500, {
+        error: "history_ingest_failed",
         message: err instanceof Error ? err.message : String(err),
       });
     }
@@ -1370,6 +1401,9 @@ function renderApp(): string {
 
         <div class="model-panel">
         <h2>Past-trade analysis</h2>
+        <div class="quick-row" style="margin:0 0 10px">
+          <button id="import-history" class="chip" type="button">Import 60d futures history</button>
+        </div>
         <div id="history-analysis" class="journal"><div class="empty">Loading imported MEXC futures history...</div></div>
         </div>
 
@@ -1407,6 +1441,7 @@ function renderApp(): string {
     const refreshContextButton = document.querySelector("#refresh-context");
     const refreshSetupBoardButton = document.querySelector("#refresh-setup-board");
     const refreshAccountButton = document.querySelector("#refresh-account");
+    const importHistoryButton = document.querySelector("#import-history");
     const saveSettingsButton = document.querySelector("#save-settings");
     const autoPollToggle = document.querySelector("#auto-poll");
     const scanMetaEl = document.querySelector("#scan-meta");
@@ -1707,7 +1742,7 @@ function renderApp(): string {
       const totals = analysis.totals;
       if (!totals.importedTrades) {
         historyEl.innerHTML =
-          "<div class='empty'>No imported futures fills yet. Run <code>pnpm history:ingest --symbols 'BTCUSDT,ETHUSDT,SOLUSDT' --days 90</code>, then this panel becomes your personal trading mirror.</div>";
+          "<div class='empty'>No imported futures fills yet. Use the import button above or run <code>pnpm history:ingest --symbols 'BTCUSDT,ETHUSDT,SOLUSDT' --days 90</code>, then this panel becomes your personal trading mirror.</div>";
         return;
       }
       const coaching = analysis.coaching || [];
@@ -2016,6 +2051,27 @@ function renderApp(): string {
       renderHistoryAnalysis(body);
     }
 
+    async function runHistoryIngest() {
+      historyEl.innerHTML = "<div class='empty'>Importing recent BTC/ETH/SOL MEXC futures fills. This is read-only and may take a moment...</div>";
+      const res = await fetch("/api/history-ingest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ days: 60 }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        historyEl.innerHTML =
+          "<div class='empty'>History ingest failed: " + escapeHtml(body.message || "unknown error") +
+          "<br><br>Check WCM entries <code>mexc-futures-access</code> and <code>mexc-futures-secret</code>, then retry.</div>";
+        return;
+      }
+      const summary = (body.reports ?? []).map((report) =>
+        escapeHtml(report.symbol) + ": " + Number(report.insertedOrUpdated || 0) + " fills"
+      ).join(" · ");
+      historyEl.innerHTML = "<div class='empty'>History import complete: " + summary + ". Rebuilding coaching view...</div>";
+      await loadHistoryAnalysis();
+    }
+
     async function loadMarketContext() {
       const res = await fetch("/api/market-context");
       const body = await res.json();
@@ -2244,6 +2300,12 @@ function renderApp(): string {
       accountEl.innerHTML = "<div class='empty'>Refreshing read-only futures account status...</div>";
       loadAccountStatus().catch((err) => {
         accountEl.innerHTML = "<div class='empty'>Account status failed: " + escapeHtml(String(err)) + "</div>";
+      });
+    });
+
+    importHistoryButton.addEventListener("click", () => {
+      runHistoryIngest().catch((err) => {
+        historyEl.innerHTML = "<div class='empty'>History ingest failed: " + escapeHtml(String(err)) + "</div>";
       });
     });
 
