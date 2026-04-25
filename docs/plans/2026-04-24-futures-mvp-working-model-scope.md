@@ -122,6 +122,11 @@ The Past-trade panel should coach behavior, not just report stats:
 - flag fee drag when churn eats the edge
 - translate each leak into a concrete next action, e.g. "avoid BTCUSDT longs unless context, backtest, and setup-board all agree"
 
+The Quick Feedback controls should make accountability easy under pressure:
+- every saved journal row should offer one-click labels for `took planned`, `skipped weak edge`, `skipped emotion`, `FOMO entry`, `moved stop`, `oversized`, and `review later`
+- feedback notes should be specific enough for later style analysis to detect recurring mistakes without forcing Matt to type an essay during fast markets
+- rule-break buttons should be visually louder than planned/skip buttons
+
 ## Required Local Product Loop
 
 The local app and CLI should support this loop:
@@ -138,6 +143,7 @@ The local app and CLI should support this loop:
 10. Past-trade analysis shows symbol + direction leaks so the app can say, "this is the kind of trade you usually mishandle."
 11. Strategy memory stores each Backtest Lab run and keeps a ranked view of breakout vs adaptive-grid effectiveness by symbol.
 12. Fundamentals Pulse adds a macro/liquidity warning layer before the setup is treated as actionable.
+13. Quick Feedback turns each took/skipped/rule-broken decision into a machine-readable behavior receipt.
 
 ## Current Commands
 

@@ -1734,16 +1734,19 @@ function renderApp(): string {
           "<p>Risk " + e.estimatedLossQuote.toFixed(2) + " USDT → reward " + e.estimatedRewardQuote.toFixed(2) + " USDT (" + e.riskRewardRatio.toFixed(2) + "R)</p>" +
           renderConflictList(e.conflicts) +
           "<div class='quick-row feedback-row'>" +
-            "<button class='chip' type='button' data-feedback='took_trade' data-journal-id='" + e.id + "'>Took trade</button>" +
-            "<button class='chip' type='button' data-feedback='skipped_trade' data-journal-id='" + e.id + "'>Skipped</button>" +
-            "<button class='chip warn' type='button' data-feedback='broke_rules' data-journal-id='" + e.id + "'>Broke rules</button>" +
-            "<button class='chip' type='button' data-feedback='review_later' data-journal-id='" + e.id + "'>Review later</button>" +
+            "<button class='chip' type='button' data-feedback='took_trade' data-feedback-note='took planned trade; stop and target were defined first' data-journal-id='" + e.id + "'>Took planned</button>" +
+            "<button class='chip' type='button' data-feedback='skipped_trade' data-feedback-note='skipped because setup/context/backtest did not agree enough' data-journal-id='" + e.id + "'>Skipped: weak edge</button>" +
+            "<button class='chip' type='button' data-feedback='skipped_trade' data-feedback-note='skipped because I felt rushed, emotional, or revenge-y' data-journal-id='" + e.id + "'>Skipped: emotion</button>" +
+            "<button class='chip warn' type='button' data-feedback='broke_rules' data-feedback-note='broke rules: entered from FOMO or before confirmation' data-journal-id='" + e.id + "'>FOMO entry</button>" +
+            "<button class='chip warn' type='button' data-feedback='broke_rules' data-feedback-note='broke rules: moved or ignored stop loss' data-journal-id='" + e.id + "'>Moved stop</button>" +
+            "<button class='chip warn' type='button' data-feedback='broke_rules' data-feedback-note='broke rules: size/leverage was too aggressive for this setup' data-journal-id='" + e.id + "'>Oversized</button>" +
+            "<button class='chip' type='button' data-feedback='review_later' data-feedback-note='review later: needs screenshot/context notes after session' data-journal-id='" + e.id + "'>Review later</button>" +
           "</div>" +
         "</article>";
       }).join("");
       journalEl.querySelectorAll("button[data-feedback]").forEach((btn) => {
         btn.addEventListener("click", () => {
-          recordFeedback(btn.dataset.feedback, Number(btn.dataset.journalId), "");
+          recordFeedback(btn.dataset.feedback, Number(btn.dataset.journalId), btn.dataset.feedbackNote || "");
         });
       });
     }
