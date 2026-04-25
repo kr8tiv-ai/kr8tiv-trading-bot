@@ -20,6 +20,7 @@ import {
   buildSetupBoardRow,
   buildTradePlansFromScan,
   compareBacktestStrategies,
+  scoreGridTradingCandidate,
 } from "@kr8tiv/signal-engine";
 import {
   buildStyleConflicts,
@@ -109,6 +110,13 @@ type ApiGridPlanResponse = {
   interval: "Min15";
   limit: number;
   plans: Array<ReturnType<typeof buildAdaptiveGridPlan>>;
+};
+
+type ApiGridCandidatesResponse = {
+  generatedAtMs: number;
+  interval: "Min15";
+  limit: number;
+  candidates: Array<ReturnType<typeof scoreGridTradingCandidate>>;
 };
 
 type ApiMarketContextResponse = {
@@ -449,6 +457,56 @@ async function handleGridPlan(url: URL): Promise<ApiGridPlanResponse> {
   };
 }
 
+async function handleGridCandidates(
+  url: URL,
+): Promise<ApiGridCandidatesResponse> {
+  const requestedLimit = Number(url.searchParams.get("limit") ?? "160");
+  const limit =
+    Number.isInteger(requestedLimit) && requestedLimit >= 80 && requestedLimit <= 500
+      ? requestedLimit
+      : 160;
+  const requestedLeverage = Number(url.searchParams.get("leverage") ?? "20");
+  const leverage =
+    Number.isFinite(requestedLeverage) && requestedLeverage >= 1 && requestedLeverage <= 100
+      ? requestedLeverage
+      : 20;
+  const settings = withDb((db) => readTraderSettings(db));
+  const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
+  const candidates = await Promise.all(
+    SUPPORTED_SYMBOLS.map(async (symbol) => {
+      const [candles, context] = await Promise.all([
+        client.fetchCandles({ symbol, interval: "Min15", limit }),
+        client.fetchMarketContext(symbol),
+      ]);
+      const comparison = compareBacktestStrategies(candles, {
+        lookback: 20,
+        riskMultipleTarget: 2,
+        gridSpacingPct: 0.006,
+        feeRate: 0.0006,
+      });
+      const plan = buildAdaptiveGridPlan({
+        symbol,
+        candles,
+        capitalQuote: settings.capitalBudgetQuote,
+        leverage,
+        riskMode: "medium",
+        gridCount: 6,
+      });
+      return scoreGridTradingCandidate({
+        plan,
+        comparison,
+        context: assessFuturesContext(context),
+      });
+    }),
+  );
+  return {
+    generatedAtMs: Date.now(),
+    interval: "Min15",
+    limit,
+    candidates,
+  };
+}
+
 async function handleMarketContext(): Promise<ApiMarketContextResponse> {
   const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
   const contexts = await Promise.all(
@@ -680,6 +738,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     } catch (err) {
       json(res, 500, {
         error: "grid_plan_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/grid-candidates") {
+    try {
+      json(res, 200, await handleGridCandidates(url));
+    } catch (err) {
+      json(res, 500, {
+        error: "grid_candidates_failed",
         message: err instanceof Error ? err.message : String(err),
       });
     }
@@ -1138,6 +1208,7 @@ function renderApp(): string {
           <button id="run-backtest" type="button" class="secondary">Compare breakout vs grid edges</button>
           <button id="refresh-effectiveness" type="button" class="secondary">Refresh strategy memory</button>
           <button id="build-grid" type="button" class="secondary">Build futures grid plan</button>
+          <button id="score-grid" type="button" class="secondary">Score grid candidates</button>
           <button id="refresh-context" type="button" class="secondary">Refresh funding + basis context</button>
           <button id="refresh-setup-board" type="button" class="secondary">Score setup board</button>
           <label class="toggle">
@@ -1272,6 +1343,10 @@ function renderApp(): string {
           <div id="grid-output" class="journal"><div class="empty">Build a medium-risk futures grid plan for BTC, ETH, and SOL using your saved capital rules. Planner only; no live grid orders fire.</div></div>
         </div>
         <div class="model-panel">
+          <h3>Grid trading candidates</h3>
+          <div id="grid-candidates-output" class="journal"><div class="empty">Score whether BTC, ETH, or SOL is actually gridable right now using replay edge, grid levels, and futures context.</div></div>
+        </div>
+        <div class="model-panel">
           <h3>Futures context</h3>
           <div id="context-output" class="journal"><div class="empty">Loading funding, basis, volume, and open-interest context...</div></div>
         </div>
@@ -1316,12 +1391,14 @@ function renderApp(): string {
     const backtestEl = document.querySelector("#backtest-output");
     const effectivenessEl = document.querySelector("#strategy-effectiveness-output");
     const gridEl = document.querySelector("#grid-output");
+    const gridCandidatesEl = document.querySelector("#grid-candidates-output");
     const contextEl = document.querySelector("#context-output");
     const feedbackEl = document.querySelector("#feedback-log");
     const scanModelButton = document.querySelector("#scan-model");
     const runBacktestButton = document.querySelector("#run-backtest");
     const refreshEffectivenessButton = document.querySelector("#refresh-effectiveness");
     const buildGridButton = document.querySelector("#build-grid");
+    const scoreGridButton = document.querySelector("#score-grid");
     const refreshContextButton = document.querySelector("#refresh-context");
     const refreshSetupBoardButton = document.querySelector("#refresh-setup-board");
     const refreshAccountButton = document.querySelector("#refresh-account");
@@ -1732,6 +1809,27 @@ function renderApp(): string {
         }).join("");
     }
 
+    function renderGridCandidates(data) {
+      const stamp = data.generatedAtMs ? new Date(data.generatedAtMs).toLocaleTimeString() : "";
+      gridCandidatesEl.innerHTML =
+        "<div class='model-meta'><span>grid candidate score " + escapeHtml(stamp) + " · paper/planner only</span></div>" +
+        (data.candidates ?? []).map((candidate) => {
+          const actionClass = candidate.action === "paper_grid" ? "ok" : candidate.action === "watch" ? "pending" : "block";
+          const blockers = candidate.blockers ?? [];
+          const notes = candidate.notes ?? [];
+          return "<article class='entry'>" +
+            "<div class='entry-head'><strong>" + escapeHtml(candidate.symbol) + " grid candidate</strong><span class='pill " + actionClass + "'>" + escapeHtml(candidate.action.replace("_", " ")) + " · " + candidate.score + "/100</span></div>" +
+            "<p><span class='pill'>levels " + candidate.gridLevelCount + "</span> <span class='pill'>range " + (Number(candidate.rangePct || 0) * 100).toFixed(2) + "%</span> <span class='pill'>best " + escapeHtml(candidate.bestBacktestStrategy || "none") + "</span> <span class='pill'>context " + escapeHtml(candidate.contextCrowding) + "</span></p>" +
+            "<p>Grid replay net " + (candidate.gridBacktestNetPnlPct === null ? "n/a" : Number(candidate.gridBacktestNetPnlPct || 0).toFixed(2) + "%") +
+            " · win " + (candidate.gridBacktestWinRate === null ? "n/a" : pct(candidate.gridBacktestWinRate)) +
+            " · PF " + (candidate.gridBacktestProfitFactor === null ? "n/a" : Number(candidate.gridBacktestProfitFactor || 0).toFixed(2)) +
+            " · allocated " + Number(candidate.allocatedCapitalQuote || 0).toFixed(2) + " USDT</p>" +
+            (blockers.length ? "<p><b>Blockers:</b> " + blockers.map(escapeHtml).join(" | ") + "</p>" : "") +
+            (notes.length ? "<ul>" + notes.slice(0, 4).map((note) => "<li>" + escapeHtml(note) + "</li>").join("") + "</ul>" : "") +
+          "</article>";
+        }).join("");
+    }
+
     function renderMarketContext(data) {
       const stamp = data.generatedAtMs ? new Date(data.generatedAtMs).toLocaleTimeString() : "";
       contextEl.innerHTML =
@@ -1881,6 +1979,17 @@ function renderApp(): string {
         return;
       }
       renderStrategyEffectiveness(body);
+    }
+
+    async function loadGridCandidates() {
+      const leverage = encodeURIComponent(formPayload().leverage || 20);
+      const res = await fetch("/api/grid-candidates?limit=160&leverage=" + leverage);
+      const body = await res.json();
+      if (!res.ok) {
+        gridCandidatesEl.innerHTML = "<div class='empty'>Grid candidate scoring failed: " + escapeHtml(body.message) + "</div>";
+        return;
+      }
+      renderGridCandidates(body);
     }
 
     async function loadSetupBoard() {
@@ -2039,6 +2148,13 @@ function renderApp(): string {
       }
     });
 
+    scoreGridButton.addEventListener("click", () => {
+      gridCandidatesEl.innerHTML = "<div class='empty'>Scoring BTC/ETH/SOL grid candidates from replay edge, grid levels, and futures context...</div>";
+      loadGridCandidates().catch((err) => {
+        gridCandidatesEl.innerHTML = "<div class='empty'>Grid candidate scoring failed: " + escapeHtml(String(err)) + "</div>";
+      });
+    });
+
     refreshContextButton.addEventListener("click", () => {
       contextEl.innerHTML = "<div class='empty'>Refreshing MEXC futures context...</div>";
       loadMarketContext().catch((err) => {
@@ -2074,6 +2190,9 @@ function renderApp(): string {
     });
     loadStrategyEffectiveness().catch((err) => {
       effectivenessEl.innerHTML = "<div class='empty'>Strategy memory failed: " + escapeHtml(String(err)) + "</div>";
+    });
+    loadGridCandidates().catch((err) => {
+      gridCandidatesEl.innerHTML = "<div class='empty'>Grid candidate scoring failed: " + escapeHtml(String(err)) + "</div>";
     });
 
     loadHistoryAnalysis().catch((err) => {

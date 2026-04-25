@@ -1,6 +1,7 @@
 export * from "./engine.js";
 export * from "./context.js";
 export * from "./grid.js";
+export * from "./grid-candidate.js";
 export * from "./indicators.js";
 export * from "./model.js";
 export * from "./setup-board.js";

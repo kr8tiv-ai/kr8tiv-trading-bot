@@ -79,6 +79,11 @@ The Grid Planner is separate from live execution. It should:
 - refuse to invent levels when the range is compressed, the budget is invalid, or leverage makes the plan unsafe
 - remain decision-support only until a later phase explicitly designs live grid execution
 
+The Grid Trading Candidate panel is the bridge between planner and execution:
+- combine adaptive-grid replay, grid levels, and futures context into `paper_grid`, `watch`, or `avoid`
+- only call a symbol gridable when the grid replay is positive, adaptive-grid is the best recent family, planner guardrails pass, and futures crowding is not hostile
+- keep the output as paper/planner-only until liquidation, partial-fill, funding, and kill-switch handling are designed for live grid orders
+
 The Futures Context panel should make the market backdrop readable before Matt clicks into a trade:
 - funding rate
 - fair/index basis
