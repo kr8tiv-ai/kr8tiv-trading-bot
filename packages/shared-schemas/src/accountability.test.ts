@@ -6,8 +6,9 @@ import {
 } from "./index.js";
 
 describe("RiskModeSchema", () => {
-  it("accepts sniper and core modes", () => {
+  it("accepts sniper, medium, and core modes", () => {
     expect(RiskModeSchema.parse("sniper")).toBe("sniper");
+    expect(RiskModeSchema.parse("medium")).toBe("medium");
     expect(RiskModeSchema.parse("core")).toBe("core");
   });
 });

@@ -6,12 +6,16 @@ import {
   ImportedTradeSchema,
   MexcBalanceResponseSchema,
   MexcFuturesAccountSnapshotSchema,
+  MexcFuturesFundingRateResponseSchema,
   MexcFuturesKlineResponseSchema,
+  MexcFuturesMarketContextSchema,
   MexcFuturesPingSchema,
+  MexcFuturesTickerResponseSchema,
   MexcPingResponseSchema,
   type ImportedTrade,
   type MarketCandle,
   type MexcFuturesAccountSnapshot,
+  type MexcFuturesMarketContext,
 } from "@kr8tiv/shared-schemas";
 
 export interface MEXCFuturesClientConfig {
@@ -344,6 +348,75 @@ export class MEXCFuturesClient {
       },
       positions,
       fetchedAtMs: Date.now(),
+    });
+  }
+
+  /**
+   * Public futures context for signal scoring. Uses official contract endpoints:
+   * - GET /api/v1/contract/ticker?symbol=BTC_USDT
+   * - GET /api/v1/contract/funding_rate/BTC_USDT
+   *
+   * This adds a lightweight "fundamental/context" layer: funding pressure,
+   * fair/index basis, 24h amount, and holdVol (MEXC's open-interest-ish field).
+   */
+  async fetchMarketContext(
+    symbol: SupportedFuturesSignalSymbol | string,
+  ): Promise<MexcFuturesMarketContext> {
+    const contractSymbol = toMexcContractSymbol(symbol);
+    const tickerUrl = `${this.baseUrl}/api/v1/contract/ticker?symbol=${contractSymbol}`;
+    const fundingUrl = `${this.baseUrl}/api/v1/contract/funding_rate/${contractSymbol}`;
+
+    const [tickerResp, fundingResp] = await Promise.all([
+      fetch(tickerUrl),
+      fetch(fundingUrl),
+    ]);
+
+    if (!tickerResp.ok) {
+      throw new Error(
+        `MEXC futures ticker failed: HTTP ${tickerResp.status} from ${tickerUrl}`,
+      );
+    }
+    if (!fundingResp.ok) {
+      throw new Error(
+        `MEXC futures funding failed: HTTP ${fundingResp.status} from ${fundingUrl}`,
+      );
+    }
+
+    const ticker = MexcFuturesTickerResponseSchema.parse(await tickerResp.json());
+    const funding = MexcFuturesFundingRateResponseSchema.parse(
+      await fundingResp.json(),
+    );
+    if (!ticker.success) {
+      throw new Error(
+        `MEXC futures ticker returned success=false (code=${ticker.code})`,
+      );
+    }
+    if (!funding.success) {
+      throw new Error(
+        `MEXC futures funding returned success=false (code=${funding.code})`,
+      );
+    }
+
+    return MexcFuturesMarketContextSchema.parse({
+      symbol: contractSymbol.replace("_USDT", "USDT"),
+      lastPrice: ticker.data.lastPrice,
+      indexPrice: ticker.data.indexPrice,
+      fairPrice: ticker.data.fairPrice,
+      basisPct:
+        ticker.data.lastPrice <= 0
+          ? 0
+          : (ticker.data.fairPrice - ticker.data.indexPrice) /
+            ticker.data.lastPrice,
+      fundingRate: funding.data.fundingRate,
+      nextSettleTime: funding.data.nextSettleTime,
+      collectCycleHours: funding.data.collectCycle,
+      volume24: ticker.data.volume24,
+      amount24: ticker.data.amount24,
+      holdVol: ticker.data.holdVol,
+      riseFallRate: ticker.data.riseFallRate,
+      high24Price: ticker.data.high24Price,
+      low24Price: ticker.data.lower24Price,
+      timestamp: Math.max(ticker.data.timestamp, funding.data.timestamp),
     });
   }
 

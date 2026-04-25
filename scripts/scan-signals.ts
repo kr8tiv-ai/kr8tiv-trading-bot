@@ -202,7 +202,7 @@ export async function scanSymbols(
 ): Promise<MarketScan[]> {
   return Promise.all(
     options.symbols.map(async (symbol) => {
-      const [shortCandles, longCandles] = await Promise.all([
+      const [shortCandles, longCandles, marketContext] = await Promise.all([
         client.fetchCandles({
           symbol,
           interval: options.shortInterval,
@@ -212,6 +212,13 @@ export async function scanSymbols(
           symbol,
           interval: options.longInterval,
           limit: options.limit,
+        }),
+        client.fetchMarketContext(symbol).catch((err) => {
+          log.warn(
+            { err, symbol },
+            "futures market context unavailable; continuing with candle-only scan",
+          );
+          return undefined;
         }),
       ]);
 
@@ -223,6 +230,9 @@ export async function scanSymbols(
         shortCandles,
         longCandles,
       };
+      if (marketContext !== undefined) {
+        input.marketContext = marketContext;
+      }
       return analyzeMarket(input);
     }),
   );

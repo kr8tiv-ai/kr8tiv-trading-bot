@@ -66,6 +66,14 @@ export function reviewTradePlan(plan: AccountableTradePlan): AccountabilityCheck
       ),
     );
   }
+  if (plan.riskMode === "medium" && (plan.leverage < 10 || plan.leverage > 50)) {
+    blocks.push(
+      issue(
+        "leverage-mode-mismatch",
+        "Medium trades must stay between 10x and 50x leverage.",
+      ),
+    );
+  }
   if (plan.riskMode === "sniper" && plan.leverage < 30) {
     blocks.push(
       issue(
@@ -80,6 +88,14 @@ export function reviewTradePlan(plan: AccountableTradePlan): AccountabilityCheck
       issue(
         "high-leverage",
         `${plan.leverage}x sniper setup; size must stay small and invalidation tight.`,
+      ),
+    );
+  }
+  if (plan.riskMode === "medium" && plan.leverage >= 40) {
+    warnings.push(
+      issue(
+        "high-leverage",
+        `${plan.leverage}x medium setup is near sniper territory; keep capital controlled.`,
       ),
     );
   }

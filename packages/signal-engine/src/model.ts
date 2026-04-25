@@ -20,7 +20,8 @@ function rounded(value: number): number {
 }
 
 export function chooseRiskMode(idea: TradeIdea): RiskMode {
-  return idea.horizon === "scalp" ? "sniper" : "core";
+  if (idea.horizon === "swing") return "core";
+  return idea.confidence >= 0.8 ? "sniper" : "medium";
 }
 
 export function suggestLeverage(idea: TradeIdea, riskMode: RiskMode): number {
@@ -28,10 +29,14 @@ export function suggestLeverage(idea: TradeIdea, riskMode: RiskMode): number {
   if (riskMode === "sniper") {
     return rounded(30 + normalizedConfidence * 70);
   }
+  if (riskMode === "medium") {
+    return rounded(10 + normalizedConfidence * 40);
+  }
   return rounded(10 + normalizedConfidence * 20);
 }
 
 function defaultMarginQuote(riskMode: RiskMode): number {
+  if (riskMode === "medium") return 25;
   return riskMode === "sniper" ? 10 : 50;
 }
 

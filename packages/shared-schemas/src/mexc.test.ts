@@ -5,8 +5,11 @@ import {
   MexcExchangeInfoSchema,
   MexcFillSchema,
   MexcFuturesAccountSnapshotSchema,
+  MexcFuturesFundingRateResponseSchema,
+  MexcFuturesMarketContextSchema,
   MexcFuturesPingSchema,
   MexcFuturesPositionSchema,
+  MexcFuturesTickerResponseSchema,
   MexcOrderResponseSchema,
   MexcPingResponseSchema,
   MexcSpotTimeSchema,
@@ -127,6 +130,82 @@ describe("MexcFuturesAccountSnapshotSchema", () => {
     });
     expect(parsed.usdt.free).toBe(80);
     expect(parsed.positions[0]?.symbol).toBe("ETHUSDT");
+  });
+});
+
+describe("MexcFuturesTickerResponseSchema", () => {
+  it("parses public contract ticker context with coerced numeric fields", () => {
+    const parsed = MexcFuturesTickerResponseSchema.parse({
+      success: true,
+      code: "0",
+      data: {
+        symbol: "BTC_USDT",
+        lastPrice: "90000",
+        bid1: "89999",
+        ask1: "90001",
+        volume24: "12345",
+        amount24: "1110000000",
+        holdVol: "55102960",
+        lower24Price: "88000",
+        high24Price: "92000",
+        riseFallRate: "0.025",
+        riseFallValue: "2200",
+        indexPrice: "89950",
+        fairPrice: "90025",
+        fundingRate: "-0.00012",
+        timestamp: 1_700_000_000_000,
+      },
+    });
+
+    expect(parsed.data.lastPrice).toBe(90000);
+    expect(parsed.data.holdVol).toBe(55102960);
+    expect(parsed.data.fundingRate).toBe(-0.00012);
+  });
+});
+
+describe("MexcFuturesFundingRateResponseSchema", () => {
+  it("parses current funding-rate response", () => {
+    const parsed = MexcFuturesFundingRateResponseSchema.parse({
+      success: true,
+      code: 0,
+      data: {
+        symbol: "BTC_USDT",
+        fundingRate: "-0.000489",
+        maxFundingRate: "0.001",
+        minFundingRate: "-0.001",
+        collectCycle: "8",
+        nextSettleTime: 1_700_028_800_000,
+        timestamp: 1_700_000_000_000,
+      },
+    });
+
+    expect(parsed.data.collectCycle).toBe(8);
+    expect(parsed.data.nextSettleTime).toBe(1_700_028_800_000);
+  });
+});
+
+describe("MexcFuturesMarketContextSchema", () => {
+  it("parses normalized futures context used by signal scoring", () => {
+    const parsed = MexcFuturesMarketContextSchema.parse({
+      symbol: "BTCUSDT",
+      lastPrice: 90000,
+      indexPrice: 89950,
+      fairPrice: 90025,
+      basisPct: 0.000833,
+      fundingRate: -0.00012,
+      nextSettleTime: 1_700_028_800_000,
+      collectCycleHours: 8,
+      volume24: 12345,
+      amount24: 1_110_000_000,
+      holdVol: 55_102_960,
+      riseFallRate: 0.025,
+      high24Price: 92000,
+      low24Price: 88000,
+      timestamp: 1_700_000_000_000,
+    });
+
+    expect(parsed.symbol).toBe("BTCUSDT");
+    expect(parsed.amount24).toBe(1_110_000_000);
   });
 });
 

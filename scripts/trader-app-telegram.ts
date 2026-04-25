@@ -8,6 +8,7 @@ import {
 import type {
   AccountableTradePlan,
   AccountabilityCheck,
+  RiskMode,
   StyleConflict,
 } from "@kr8tiv/shared-schemas";
 import type { SecretProvider } from "@kr8tiv/secrets";
@@ -55,7 +56,7 @@ export interface TradeJournalLookupEntry {
   readonly symbol: string;
   readonly direction: "long" | "short";
   readonly leverage: number;
-  readonly riskMode: "sniper" | "core";
+  readonly riskMode: RiskMode;
   readonly telegramMessageId: number | null;
 }
 

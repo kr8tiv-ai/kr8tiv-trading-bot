@@ -3,6 +3,7 @@ import {
   TradeIdeaSchema,
   type MarketCandle,
   type MarketScan,
+  type MexcFuturesMarketContext,
   type StrategySignal,
   type TradeIdea,
 } from "@kr8tiv/shared-schemas";
@@ -18,6 +19,7 @@ export interface AnalyzeMarketInput {
   longTimeframe: string;
   shortCandles: MarketCandle[];
   longCandles: MarketCandle[];
+  marketContext?: MexcFuturesMarketContext;
 }
 
 type SwingPoint = { index: number; value: number };
@@ -332,6 +334,160 @@ function buildBreakoutSignal(
   };
 }
 
+function buildAdaptiveGridSignal(
+  candles: MarketCandle[],
+  timeframe: string,
+): StrategySignal {
+  const recent = candles.slice(-36);
+  const last = recent.at(-1);
+  if (!last || recent.length < 36) {
+    return {
+      strategy: "adaptive-grid",
+      timeframe,
+      bias: "neutral",
+      confidence: 0.34,
+      summary: "not enough candles to judge adaptive grid structure",
+    };
+  }
+
+  const rangeHigh = Math.max(...recent.map((candle) => candle.high));
+  const rangeLow = Math.min(...recent.map((candle) => candle.low));
+  const range = rangeHigh - rangeLow;
+  const rangePct = last.close > 0 ? range / last.close : 0;
+  const atrValue = atr(candles, 14).at(-1) ?? last.close * 0.004;
+  const atrPct = last.close > 0 ? atrValue / last.close : 0;
+  const lowerZone = rangeLow + range * 0.32;
+  const upperZone = rangeHigh - range * 0.32;
+  const metrics = {
+    lowerGrid: rangeLow,
+    upperGrid: rangeHigh,
+    rangePct,
+    atrPct,
+  };
+
+  if (rangePct < 0.012) {
+    return {
+      strategy: "adaptive-grid",
+      timeframe,
+      bias: "neutral",
+      confidence: 0.38,
+      summary: "range is too compressed for a healthy futures grid",
+      metrics,
+    };
+  }
+  if (rangePct > 0.08) {
+    return {
+      strategy: "adaptive-grid",
+      timeframe,
+      bias: "neutral",
+      confidence: 0.36,
+      summary: "range is too wide; grid would need oversized stops",
+      metrics,
+    };
+  }
+
+  if (last.close <= lowerZone) {
+    return {
+      strategy: "adaptive-grid",
+      timeframe,
+      bias: "long",
+      confidence: 0.62,
+      summary:
+        "price is near the lower grid band inside a tradable futures range",
+      metrics,
+    };
+  }
+  if (last.close >= upperZone) {
+    return {
+      strategy: "adaptive-grid",
+      timeframe,
+      bias: "short",
+      confidence: 0.62,
+      summary:
+        "price is near the upper grid band inside a tradable futures range",
+      metrics,
+    };
+  }
+
+  return {
+    strategy: "adaptive-grid",
+    timeframe,
+    bias: "neutral",
+    confidence: 0.48,
+    summary: "price is mid-range; grid is watch-only until an edge band is tagged",
+    metrics,
+  };
+}
+
+function buildFuturesContextSignal(
+  context?: MexcFuturesMarketContext,
+): StrategySignal {
+  if (!context) {
+    return {
+      strategy: "futures-context",
+      timeframe: "market-context",
+      bias: "neutral",
+      confidence: 0.35,
+      summary: "funding, basis, and open-interest context unavailable",
+    };
+  }
+
+  const crowdedLongs = context.fundingRate >= 0.0005 && context.basisPct >= 0.001;
+  const crowdedShorts =
+    context.fundingRate <= -0.0005 && context.basisPct <= -0.001;
+
+  if (crowdedLongs) {
+    return {
+      strategy: "futures-context",
+      timeframe: "market-context",
+      bias: "short",
+      confidence: 0.56,
+      summary:
+        "positive funding and positive fair/index basis suggest crowded long pressure",
+      metrics: {
+        fundingRate: context.fundingRate,
+        basisPct: context.basisPct,
+        amount24: context.amount24,
+        holdVol: context.holdVol,
+        riseFallRate: context.riseFallRate,
+      },
+    };
+  }
+
+  if (crowdedShorts) {
+    return {
+      strategy: "futures-context",
+      timeframe: "market-context",
+      bias: "long",
+      confidence: 0.56,
+      summary:
+        "negative funding and negative fair/index basis suggest crowded short pressure",
+      metrics: {
+        fundingRate: context.fundingRate,
+        basisPct: context.basisPct,
+        amount24: context.amount24,
+        holdVol: context.holdVol,
+        riseFallRate: context.riseFallRate,
+      },
+    };
+  }
+
+  return {
+    strategy: "futures-context",
+    timeframe: "market-context",
+    bias: "neutral",
+    confidence: 0.46,
+    summary: "funding and basis are not stretched enough to create a crowding edge",
+    metrics: {
+      fundingRate: context.fundingRate,
+      basisPct: context.basisPct,
+      amount24: context.amount24,
+      holdVol: context.holdVol,
+      riseFallRate: context.riseFallRate,
+    },
+  };
+}
+
 function scoreForBias(signal: StrategySignal, bias: "long" | "short"): number {
   if (signal.bias === bias) return signal.confidence;
   if (signal.bias === "neutral") return 0.15 * signal.confidence;
@@ -422,7 +578,19 @@ export function analyzeMarket(input: AnalyzeMarketInput): MarketScan {
     input.shortCandles,
     input.shortTimeframe,
   );
-  const strategies = [trendSignal, rsiSignal, macdSignal, breakoutSignal];
+  const gridSignal = buildAdaptiveGridSignal(
+    input.shortCandles,
+    input.shortTimeframe,
+  );
+  const contextSignal = buildFuturesContextSignal(input.marketContext);
+  const strategies = [
+    trendSignal,
+    rsiSignal,
+    macdSignal,
+    breakoutSignal,
+    gridSignal,
+    contextSignal,
+  ];
 
   const longScore = strategies.reduce(
     (sum, signal) => sum + scoreForBias(signal, "long"),
@@ -467,6 +635,28 @@ export function analyzeMarket(input: AnalyzeMarketInput): MarketScan {
         support,
         resistance,
         confidence: shortScore / 3.2,
+        strategies,
+      }),
+    );
+  }
+  if (
+    gridSignal.bias !== "neutral" &&
+    gridSignal.confidence >= 0.58 &&
+    !ideas.some(
+      (idea) => idea.direction === gridSignal.bias && idea.horizon === "scalp",
+    )
+  ) {
+    ideas.push(
+      buildIdea({
+        symbol: input.symbol,
+        market: input.market,
+        direction: gridSignal.bias,
+        horizon: "scalp",
+        currentPrice,
+        atrValue,
+        support,
+        resistance,
+        confidence: gridSignal.confidence,
         strategies,
       }),
     );

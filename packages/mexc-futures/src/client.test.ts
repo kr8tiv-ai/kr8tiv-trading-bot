@@ -294,3 +294,70 @@ describe("MEXCFuturesClient.fetchAccountSnapshot (read-only futures exposure)", 
     ]);
   });
 });
+
+describe("MEXCFuturesClient.fetchMarketContext (public funding + ticker)", () => {
+  it("normalizes MEXC ticker and funding-rate data into signal context", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          code: 0,
+          data: {
+            symbol: "BTC_USDT",
+            lastPrice: "90000",
+            volume24: "12345",
+            amount24: "1110000000",
+            holdVol: "55102960",
+            lower24Price: "88000",
+            high24Price: "92000",
+            riseFallRate: "0.025",
+            indexPrice: "89950",
+            fairPrice: "90025",
+            fundingRate: "-0.00012",
+            timestamp: 1_700_000_000_000,
+          },
+        }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          code: 0,
+          data: {
+            symbol: "BTC_USDT",
+            fundingRate: "-0.00012",
+            maxFundingRate: "0.001",
+            minFundingRate: "-0.001",
+            collectCycle: 8,
+            nextSettleTime: 1_700_028_800_000,
+            timestamp: 1_700_000_000_000,
+          },
+        }),
+      } as Response);
+
+    const client = await MEXCFuturesClient.create({ secrets: mockProvider() });
+    const context = await client.fetchMarketContext("BTCUSDT");
+
+    expect(fetchSpy.mock.calls[0]?.[0]).toEqual(
+      "https://contract.mexc.com/api/v1/contract/ticker?symbol=BTC_USDT",
+    );
+    expect(fetchSpy.mock.calls[1]?.[0]).toEqual(
+      "https://contract.mexc.com/api/v1/contract/funding_rate/BTC_USDT",
+    );
+    expect(context).toMatchObject({
+      symbol: "BTCUSDT",
+      lastPrice: 90000,
+      indexPrice: 89950,
+      fairPrice: 90025,
+      basisPct: expect.closeTo(0.0008333333, 8),
+      fundingRate: -0.00012,
+      collectCycleHours: 8,
+      amount24: 1_110_000_000,
+      holdVol: 55_102_960,
+    });
+
+    fetchSpy.mockRestore();
+  });
+});

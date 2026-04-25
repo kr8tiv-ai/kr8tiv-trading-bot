@@ -38,14 +38,17 @@ function scan(ideas: TradeIdea[]): MarketScan {
 }
 
 describe("futures trade model bridge", () => {
-  it("defaults scalp setups to sniper mode and swing setups to core mode", () => {
-    expect(chooseRiskMode(idea({ horizon: "scalp" }))).toBe("sniper");
+  it("defaults lower-confidence scalps to medium, strong scalps to sniper, and swings to core", () => {
+    expect(chooseRiskMode(idea({ horizon: "scalp", confidence: 0.68 }))).toBe("medium");
+    expect(chooseRiskMode(idea({ horizon: "scalp", confidence: 0.86 }))).toBe("sniper");
     expect(chooseRiskMode(idea({ horizon: "swing" }))).toBe("core");
   });
 
-  it("keeps sniper leverage inside 30x-100x and core leverage at 30x or below", () => {
+  it("keeps sniper, medium, and core leverage inside their accountability bands", () => {
     expect(suggestLeverage(idea({ confidence: 0.95 }), "sniper")).toBeGreaterThanOrEqual(30);
     expect(suggestLeverage(idea({ confidence: 0.95 }), "sniper")).toBeLessThanOrEqual(100);
+    expect(suggestLeverage(idea({ confidence: 0.95 }), "medium")).toBeGreaterThanOrEqual(10);
+    expect(suggestLeverage(idea({ confidence: 0.95 }), "medium")).toBeLessThanOrEqual(50);
     expect(suggestLeverage(idea({ confidence: 0.95 }), "core")).toBeLessThanOrEqual(30);
   });
 

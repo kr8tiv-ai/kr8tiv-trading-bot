@@ -62,6 +62,33 @@ describe("reviewTradePlan", () => {
     );
   });
 
+  it("allows medium setups between core patience and sniper aggression", () => {
+    const review = reviewTradePlan(
+      basePlan({
+        riskMode: "medium",
+        leverage: 35,
+        marginQuote: 20,
+      }),
+    );
+
+    expect(review.okToProceed).toBe(true);
+    expect(review.blocks).toEqual([]);
+  });
+
+  it("blocks medium setups above 50x", () => {
+    const review = reviewTradePlan(
+      basePlan({
+        riskMode: "medium",
+        leverage: 60,
+      }),
+    );
+
+    expect(review.okToProceed).toBe(false);
+    expect(review.blocks.map((b) => b.code)).toContain(
+      "leverage-mode-mismatch",
+    );
+  });
+
   it("blocks missing thesis/journal discipline", () => {
     const review = reviewTradePlan(
       basePlan({

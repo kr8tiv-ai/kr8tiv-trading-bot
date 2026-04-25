@@ -13,7 +13,10 @@ import {
 import { createLogger } from "@kr8tiv/logger";
 import { MEXCFuturesClient } from "@kr8tiv/mexc-futures";
 import { WindowsCredentialManagerProvider } from "@kr8tiv/secrets";
-import { buildTradePlansFromScan } from "@kr8tiv/signal-engine";
+import {
+  buildTradePlansFromScan,
+  compareBacktestStrategies,
+} from "@kr8tiv/signal-engine";
 import {
   buildStyleConflicts,
   buildStyleFingerprint,
@@ -56,7 +59,10 @@ type ApiReviewResponse = {
 };
 
 type ApiModelPlan = {
-  scan: Pick<MarketScan, "symbol" | "regime" | "currentPrice" | "warnings">;
+  scan: Pick<
+    MarketScan,
+    "symbol" | "regime" | "currentPrice" | "warnings" | "strategies"
+  >;
   plan: AccountableTradePlan;
   review: AccountabilityCheck;
   conflicts: StyleConflict[];
@@ -66,6 +72,17 @@ type ApiModelScanResponse = {
   scans: MarketScan[];
   plans: ApiModelPlan[];
   generatedAtMs: number;
+};
+
+type ApiBacktestResponse = {
+  generatedAtMs: number;
+  interval: "Min15";
+  limit: number;
+  results: Array<{
+    symbol: string;
+    currentPrice: number;
+    comparison: ReturnType<typeof compareBacktestStrategies>;
+  }>;
 };
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -279,6 +296,7 @@ async function handleModelScan(url: URL): Promise<ApiModelScanResponse> {
         regime: scan.regime,
         currentPrice: scan.currentPrice,
         warnings: scan.warnings,
+        strategies: scan.strategies,
       },
       plan,
       review: reviewTradePlan(plan),
@@ -290,6 +308,41 @@ async function handleModelScan(url: URL): Promise<ApiModelScanResponse> {
     })),
   );
   return { scans, plans, generatedAtMs };
+}
+
+async function handleBacktest(url: URL): Promise<ApiBacktestResponse> {
+  const requestedLimit = Number(url.searchParams.get("limit") ?? "320");
+  const limit =
+    Number.isInteger(requestedLimit) && requestedLimit >= 80 && requestedLimit <= 500
+      ? requestedLimit
+      : 320;
+  const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
+  const results = await Promise.all(
+    SUPPORTED_SYMBOLS.map(async (symbol) => {
+      const candles = await client.fetchCandles({
+        symbol,
+        interval: "Min15",
+        limit,
+      });
+      return {
+        symbol,
+        currentPrice: candles.at(-1)?.close ?? 0,
+        comparison: compareBacktestStrategies(candles, {
+          lookback: 20,
+          riskMultipleTarget: 2,
+          gridSpacingPct: 0.006,
+          feeRate: 0.0006,
+        }),
+      };
+    }),
+  );
+
+  return {
+    generatedAtMs: Date.now(),
+    interval: "Min15",
+    limit,
+    results,
+  };
 }
 
 function countTodaysEntries(entries: TradeJournalEntry[]): number {
@@ -341,6 +394,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     } catch (err) {
       json(res, 500, {
         error: "model_scan_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/backtest") {
+    try {
+      json(res, 200, await handleBacktest(url));
+    } catch (err) {
+      json(res, 500, {
+        error: "backtest_failed",
         message: err instanceof Error ? err.message : String(err),
       });
     }
@@ -505,6 +570,45 @@ function renderApp(): string {
       text-transform: uppercase;
     }
     .toggle input { accent-color: var(--green); }
+    .quick-panel {
+      grid-column: span 4;
+      display: grid;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 14px;
+      background: rgba(148, 255, 152, 0.045);
+    }
+    .quick-panel strong {
+      color: var(--ink);
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .quick-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 11px;
+      background: rgba(0, 0, 0, 0.24);
+      color: var(--muted);
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color 160ms ease, color 160ms ease, transform 160ms ease;
+    }
+    .chip:hover {
+      border-color: rgba(148, 255, 152, 0.55);
+      color: var(--ink);
+      transform: translateY(-1px);
+    }
+    .chip.warn {
+      border-color: rgba(255, 211, 106, 0.3);
+      color: var(--amber);
+    }
     .telegram-pill {
       display: inline-flex;
       gap: 6px;
@@ -654,6 +758,14 @@ function renderApp(): string {
     .pill.info { color: var(--blue); border-color: rgba(122, 215, 255, 0.42); }
     .pill.conflict { color: var(--pink); border-color: rgba(255, 154, 203, 0.42); }
     .entry p { margin: 8px 0 0; color: var(--muted); line-height: 1.45; font-size: 13px; }
+    .strategy-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(244, 239, 227, 0.08);
+    }
     .model-panel {
       margin-top: 18px;
       border-top: 1px solid var(--line);
@@ -708,10 +820,12 @@ function renderApp(): string {
         <h2>Risk modes <span id="telegram-status" class="telegram-pill off">telegram off</span></h2>
         <div class="mode-grid">
           <div class="mode"><strong>Sniper</strong><span>30x-100x, small margin, tight invalidation, fast review. Built for risky snipes without letting size drift.</span></div>
+          <div class="mode"><strong>Medium</strong><span>10x-50x, faster than core but not full-send. Built for clean BTC/ETH/SOL setups that need discipline more than adrenaline.</span></div>
           <div class="mode"><strong>Core</strong><span>Higher capital, 30x max, cleaner thesis, better R/R. Built for trades that deserve patience.</span></div>
         </div>
         <div class="scan-controls">
           <button id="scan-model" type="button">Scan live BTC/ETH/SOL model</button>
+          <button id="run-backtest" type="button" class="secondary">Compare breakout vs grid edges</button>
           <label class="toggle">
             <input id="auto-poll" type="checkbox" checked>
             <span>Auto-refresh every 30s</span>
@@ -747,6 +861,7 @@ function renderApp(): string {
           <label>Mode
             <select name="riskMode">
               <option value="sniper">Sniper</option>
+              <option value="medium">Medium</option>
               <option value="core">Core</option>
             </select>
           </label>
@@ -768,6 +883,22 @@ function renderApp(): string {
           <label class="span-2">Generated from signal ID (optional)
             <input name="generatedFromSignalId" placeholder="signal_...">
           </label>
+          <div class="quick-panel">
+            <strong>Fast trade controls</strong>
+            <div class="quick-row" aria-label="capital presets">
+              <button class="chip" type="button" data-capital="10">10 USDT probe</button>
+              <button class="chip" type="button" data-capital="25">25 USDT medium</button>
+              <button class="chip" type="button" data-capital="50">50 USDT core</button>
+              <button class="chip warn" type="button" data-capital="100">100 USDT deliberate</button>
+            </div>
+            <div class="quick-row" aria-label="trade reason presets">
+              <button class="chip" type="button" data-why="Liquidity sweep + reclaim">Sweep + reclaim</button>
+              <button class="chip" type="button" data-why="Trend continuation pullback">Trend pullback</button>
+              <button class="chip" type="button" data-why="Breakout retest with volume">Breakout retest</button>
+              <button class="chip" type="button" data-why="Funding and basis crowding fade">Funding fade</button>
+              <button class="chip warn" type="button" data-why="Impulse/revenge check">Impulse check</button>
+            </div>
+          </div>
           <label class="span-4">Why this trade?
             <textarea name="thesis">15m reclaim with momentum confirmation after liquidity sweep</textarea>
           </label>
@@ -782,6 +913,10 @@ function renderApp(): string {
         <div id="verdict" class="verdict">
           <h3>Waiting for a plan</h3>
           <p class="lede">Fill the trade, then make the bot argue with you before you size it. If Telegram is configured, a "Review + save + Telegram" press also sends you the card to approve on your phone.</p>
+        </div>
+        <div class="model-panel">
+          <h3>Backtest lab</h3>
+          <div id="backtest-output" class="journal"><div class="empty">Run the backtest to compare breakout + trailing-stop vs adaptive futures grid on recent MEXC candles.</div></div>
         </div>
         <div class="model-panel">
           <h3>Live model drafts</h3>
@@ -807,7 +942,9 @@ function renderApp(): string {
     const journalEl = document.querySelector("#journal");
     const historyEl = document.querySelector("#history-analysis");
     const modelEl = document.querySelector("#model-output");
+    const backtestEl = document.querySelector("#backtest-output");
     const scanModelButton = document.querySelector("#scan-model");
+    const runBacktestButton = document.querySelector("#run-backtest");
     const autoPollToggle = document.querySelector("#auto-poll");
     const scanMetaEl = document.querySelector("#scan-meta");
     const telegramStatusEl = document.querySelector("#telegram-status");
@@ -867,6 +1004,34 @@ function renderApp(): string {
       form.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
+    function applyQuickReason(label) {
+      const thesisEl = form.elements.namedItem("thesis");
+      const noteEl = form.elements.namedItem("journalNote");
+      const symbol = form.elements.namedItem("symbol")?.value || "BTCUSDT";
+      const direction = form.elements.namedItem("direction")?.value || "long";
+      const horizon = form.elements.namedItem("horizon")?.value || "scalp";
+
+      const thesisMap = {
+        "Liquidity sweep + reclaim": horizon + " " + direction + " on " + symbol + ": liquidity sweep reclaimed structure with momentum confirmation.",
+        "Trend continuation pullback": horizon + " " + direction + " on " + symbol + ": trend continuation pullback into value with invalidation defined.",
+        "Breakout retest with volume": horizon + " " + direction + " on " + symbol + ": breakout retest holding with volume confirmation.",
+        "Funding and basis crowding fade": horizon + " " + direction + " on " + symbol + ": funding/basis crowding supports a fade with tight invalidation.",
+        "Impulse/revenge check": horizon + " " + direction + " on " + symbol + ": I am checking whether this is impulse; only valid if structure and stop are clean.",
+      };
+      const noteMap = {
+        "Impulse/revenge check": "Accountability flag: pause 60 seconds and confirm this is not revenge, boredom, or chasing.",
+      };
+
+      if (thesisEl) {
+        thesisEl.value = thesisMap[label] || label;
+        thesisEl.dataset.autofilled = "1";
+      }
+      if (noteEl) {
+        noteEl.value = noteMap[label] || "Fast-preset reason selected; I must verify stop, target, and sizing before entry.";
+        noteEl.dataset.autofilled = "1";
+      }
+    }
+
     function issueList(label, items, extraClass = "") {
       if (!items.length) return "";
       return "<strong>" + label + "</strong><ul class='" + extraClass + "'>"
@@ -911,6 +1076,13 @@ function renderApp(): string {
       return "<p><b>Style:</b></p><ul class='conflicts'>" +
         conflicts.map((c) => "<li>(" + c.severity + ") " + escapeHtml(c.message) + "</li>").join("") +
         "</ul>";
+    }
+
+    function renderDrivers(strategies) {
+      if (!strategies || strategies.length === 0) return "";
+      return "<p><b>Drivers:</b> " + strategies.map((s) =>
+        "<span class='pill'>" + escapeHtml(s.strategy) + " " + escapeHtml(s.bias) + " " + Math.round((s.confidence || 0) * 100) + "%</span>"
+      ).join(" ") + "</p>";
     }
 
     function renderJournal(entries) {
@@ -981,7 +1153,9 @@ function renderApp(): string {
           "<div class='empty'>No accountable trade plan right now. That is a signal too — wait for cleaner BTC/ETH/SOL structure.</div>" +
           (data.scans || []).map((s) =>
             "<article class='entry'><div class='entry-head'><strong>" + escapeHtml(s.symbol) + "</strong><span class='pill'>" + escapeHtml(s.regime) + "</span></div>" +
-            "<p>Price " + s.currentPrice + " | Ideas: " + (s.ideas ? s.ideas.length : 0) + "</p></article>"
+            "<p>Price " + s.currentPrice + " | Ideas: " + (s.ideas ? s.ideas.length : 0) + "</p>" +
+            renderDrivers(s.strategies) +
+            "</article>"
           ).join("");
         return;
       }
@@ -996,6 +1170,7 @@ function renderApp(): string {
           "<p>Entry " + p.entryPrice + " | Stop " + p.stopLossPrice + " | Target " + p.takeProfitPrice + "</p>" +
           "<p>Risk " + r.estimatedLossQuote.toFixed(2) + " USDT → reward " + r.estimatedRewardQuote.toFixed(2) + " USDT (" + r.riskRewardRatio.toFixed(2) + "R)</p>" +
           "<p><b>Thesis:</b> " + escapeHtml(p.thesis) + "</p>" +
+          renderDrivers(item.scan.strategies) +
           renderConflictList(conflicts) +
           "<p><button class='small' data-use-plan='" + idx + "'>Use this plan</button></p>" +
         "</article>";
@@ -1007,6 +1182,32 @@ function renderApp(): string {
           if (plan) fillIntakeFromPlan(plan);
         });
       });
+    }
+
+    function renderBacktest(data) {
+      const stamp = data.generatedAtMs ? new Date(data.generatedAtMs).toLocaleTimeString() : "";
+      backtestEl.innerHTML =
+        "<div class='model-meta'><span>15m replay " + escapeHtml(stamp) + " · " + data.limit + " candles</span></div>" +
+        data.results.map((row) => {
+          const c = row.comparison;
+          const best = c.best;
+          const rows = (c.results ?? []).map((b) =>
+            "<div class='strategy-row'>" +
+              "<span class='pill'>" + escapeHtml(b.strategy) + "</span>" +
+              "<span class='pill " + (b.netPnlPct >= 0 ? "ok" : "block") + "'>" + (b.netPnlPct >= 0 ? "+" : "") + b.netPnlPct.toFixed(2) + "%</span>" +
+              "<span class='pill'>" + b.trades.length + " trades</span>" +
+              "<span class='pill'>" + pct(b.winRate) + " win</span>" +
+              "<span class='pill'>PF " + Number(b.profitFactor || 0).toFixed(2) + "</span>" +
+              "<span class='pill'>DD " + Number(b.maxDrawdownPct || 0).toFixed(2) + "%</span>" +
+            "</div>"
+          ).join("");
+          return "<article class='entry'>" +
+            "<div class='entry-head'><strong>" + escapeHtml(row.symbol) + "</strong><span class='pill " + (best && best.netPnlPct >= 0 ? "ok" : "block") + "'>" + escapeHtml(best ? best.strategy : "no edge") + "</span></div>" +
+            "<p>" + escapeHtml(c.recommendation || "not enough replay data") + " | current price " + Number(row.currentPrice || 0).toFixed(4) + "</p>" +
+            rows +
+            ((c.results ?? []).flatMap((b) => b.warnings ?? []).length ? "<p>" + (c.results ?? []).flatMap((b) => b.warnings ?? []).map(escapeHtml).join(" | ") + "</p>" : "") +
+          "</article>";
+        }).join("");
     }
 
     async function loadJournal() {
@@ -1072,6 +1273,20 @@ function renderApp(): string {
       }
     });
 
+    document.querySelectorAll("[data-capital]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const margin = button.dataset.capital;
+        const marginEl = form.elements.namedItem("marginQuote");
+        if (marginEl && margin) marginEl.value = margin;
+      });
+    });
+
+    document.querySelectorAll("[data-why]").forEach((button) => {
+      button.addEventListener("click", () => {
+        applyQuickReason(button.dataset.why || "");
+      });
+    });
+
     form.addEventListener("click", (event) => {
       if (event.target instanceof HTMLButtonElement && event.target.type === "submit") {
         saveNext = event.target.dataset.save === "1";
@@ -1104,6 +1319,21 @@ function renderApp(): string {
 
     scanModelButton.addEventListener("click", () => {
       runModelScan("manual").catch((err) => console.error("manual-scan failed:", err));
+    });
+
+    runBacktestButton.addEventListener("click", async () => {
+      backtestEl.innerHTML = "<div class='empty'>Replaying BTC/ETH/SOL MEXC futures candles...</div>";
+      try {
+        const res = await fetch("/api/backtest?limit=320");
+        const body = await res.json();
+        if (!res.ok) {
+          backtestEl.innerHTML = "<div class='empty'>Backtest failed: " + escapeHtml(body.message) + "</div>";
+          return;
+        }
+        renderBacktest(body);
+      } catch (err) {
+        backtestEl.innerHTML = "<div class='empty'>Backtest failed: " + escapeHtml(String(err)) + "</div>";
+      }
     });
 
     loadJournal().catch((err) => {

@@ -2,13 +2,13 @@
 
 ## What This Is
 
-A personal trading **copilot** for BTC, ETH, and SOL on **MEXC** (spot + USDT-M futures) that learns from Matt's last ~60 days of real trading activity, detects his behavioral leaks, and suggests entries/exits aligned with his trading "motion" but corrected for recurring mistakes — cross-referenced with crypto news and on-chain fundamentals. The bot runs a **local CPU-only ML model** (no GPU, no cloud inference), operates semi-autonomously (drafts orders → Telegram ping → Matt taps approve → bot fires), and starts with a live $10 bankroll as the first real test.
+A personal trading **copilot** for BTC, ETH, and SOL on **MEXC USDT-M futures first** that learns from Matt's real trading activity, detects his behavioral leaks, and suggests long/short entries/exits aligned with his trading "motion" but corrected for recurring mistakes — cross-referenced with market context, fundamentals, and backtested strategy effectiveness. The web app is the primary v1 cockpit: scan setups, compare strategy families, adjust capital, log why a trade exists, and keep Matt accountable before risk leaves his hands.
 
 It is for Matt, a DeFi/AI builder (kr8tiv-ai org) who already trades on MEXC and runs on-chain on Solana + Ethereum. The goal is not to maximize PnL on $10 — that's physically hard. The goal is to turn Matt's own trade history into a self-improvement loop that compounds over many cycles.
 
 ## Core Value
 
-**Make Matt a better trader by surfacing what he already does well and correcting what he consistently does wrong — with a bot that never fires without his approval.**
+**Make Matt a better trader by surfacing what he already does well and correcting what he consistently does wrong — with a futures cockpit that turns signals, backtests, and journaling into accountable decisions.**
 
 If everything else fails but this works (leaks identified, style preserved, one actionable correction per week), the project has succeeded. PnL on $10 is a side effect, not the goal.
 
@@ -101,7 +101,7 @@ If everything else fails but this works (leaks identified, style preserved, one 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Execution venue: MEXC | Matt's active venue; broad altcoin reach; frequent zero-fee futures promos matter at $10 scale | — Pending |
-| Copilot (semi-auto + Telegram approval), not autonomous bot | $10 bankroll + Matt wants his style preserved; approval loop is the safety rail | — Pending |
+| Web-first futures cockpit, Telegram secondary | Matt now wants the local app/panel to be the basis: signal scan, backtest lab, capital controls, quick trade logging, and accountability prompts. Telegram remains optional notification plumbing, not the core product. | ✅ Updated 2026-04-25 |
 | Local CPU ML (XGBoost/LightGBM candidate), no GPU | Matt's explicit constraint; keeps bot self-contained + private | — Pending |
 | MEXC-only execution, multi-venue history | Matt's active venue; simplifies exec layer; history still captures full picture | — Pending |
 | Three UIs (Telegram + local web + CLI) | Matt wants all three; each serves a different mode (approval, deep-dive, ops) | ⚠️ Revisit — may trim if weekend target slips |
@@ -110,7 +110,8 @@ If everything else fails but this works (leaks identified, style preserved, one 
 | Primary Windows + Hostinger VPS backup | Covers laptop sleep / offline risk while staying cheap | — Pending |
 | Style-preserving, not style-overriding model | Core Value: make Matt better, not replace him | — Pending |
 | News as confirmation/veto, not primary signal | ML + user style drives entries; news filters false positives | — Pending |
-| Max leverage cap below MEXC's maximum (5/4/3x on BTC/ETH/SOL) | Max leverage = max liquidation speed. $10 can't survive a wick | — Pending |
+| Futures risk modes: sniper / medium / core | Matt sometimes takes 30x-100x snipes, but the app must label them, shrink margin, demand a clear reason, and default most lower-confidence app ideas into medium risk. | ✅ Updated 2026-04-25 |
+| Backtest before capital | Every visible strategy family should show recent replay evidence (net PnL, win rate, PF, drawdown, trade count) so Matt can see whether breakout or adaptive grid is currently effective for BTC/ETH/SOL. | ✅ Updated 2026-04-25 |
 
 ## Evolution
 

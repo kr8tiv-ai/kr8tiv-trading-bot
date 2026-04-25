@@ -142,6 +142,73 @@ export type MexcFuturesAccountSnapshot = z.infer<
   typeof MexcFuturesAccountSnapshotSchema
 >;
 
+const MexcFuturesTickerDataSchema = z.object({
+  symbol: z.string().min(1),
+  lastPrice: z.coerce.number().positive(),
+  bid1: z.coerce.number().positive().optional(),
+  ask1: z.coerce.number().positive().optional(),
+  volume24: z.coerce.number().nonnegative(),
+  amount24: z.coerce.number().nonnegative(),
+  holdVol: z.coerce.number().nonnegative(),
+  lower24Price: z.coerce.number().positive(),
+  high24Price: z.coerce.number().positive(),
+  riseFallRate: z.coerce.number(),
+  riseFallValue: z.coerce.number().optional(),
+  indexPrice: z.coerce.number().positive(),
+  fairPrice: z.coerce.number().positive(),
+  fundingRate: z.coerce.number(),
+  timestamp: z.coerce.number().int().positive(),
+});
+
+export const MexcFuturesTickerResponseSchema = z.object({
+  success: z.boolean(),
+  code: z.coerce.number(),
+  data: MexcFuturesTickerDataSchema,
+});
+export type MexcFuturesTickerResponse = z.infer<
+  typeof MexcFuturesTickerResponseSchema
+>;
+
+const MexcFuturesFundingRateDataSchema = z.object({
+  symbol: z.string().min(1),
+  fundingRate: z.coerce.number(),
+  maxFundingRate: z.coerce.number(),
+  minFundingRate: z.coerce.number(),
+  collectCycle: z.coerce.number().int().positive(),
+  nextSettleTime: z.coerce.number().int().positive(),
+  timestamp: z.coerce.number().int().positive(),
+});
+
+export const MexcFuturesFundingRateResponseSchema = z.object({
+  success: z.boolean(),
+  code: z.coerce.number(),
+  data: MexcFuturesFundingRateDataSchema,
+});
+export type MexcFuturesFundingRateResponse = z.infer<
+  typeof MexcFuturesFundingRateResponseSchema
+>;
+
+export const MexcFuturesMarketContextSchema = z.object({
+  symbol: AccountableSymbolSchema,
+  lastPrice: z.number().positive(),
+  indexPrice: z.number().positive(),
+  fairPrice: z.number().positive(),
+  basisPct: z.number(),
+  fundingRate: z.number(),
+  nextSettleTime: z.number().int().positive(),
+  collectCycleHours: z.number().int().positive(),
+  volume24: z.number().nonnegative(),
+  amount24: z.number().nonnegative(),
+  holdVol: z.number().nonnegative(),
+  riseFallRate: z.number(),
+  high24Price: z.number().positive(),
+  low24Price: z.number().positive(),
+  timestamp: z.number().int().positive(),
+});
+export type MexcFuturesMarketContext = z.infer<
+  typeof MexcFuturesMarketContextSchema
+>;
+
 // ---------------------------------------------------------------------------
 // Phase 2 additions — order / cancel / fill / exchangeInfo response shapes.
 // Consumed by @kr8tiv/mexc-spot write methods (Plan 02-02) and @kr8tiv/executor
