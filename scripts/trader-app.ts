@@ -37,6 +37,13 @@ import {
   startTelegramDispatcher,
   type TelegramDispatcher,
 } from "./trader-app-telegram.js";
+import {
+  listRecentTradeFeedback,
+  readTraderSettings,
+  recordTradeFeedback,
+  saveTraderSettings,
+  type TradeFeedbackAction,
+} from "./trader-app-state.js";
 import { buildPastTradeAnalysis } from "./trade-history-analysis.js";
 
 const HOST = process.env.TRADER_APP_HOST ?? "127.0.0.1";
@@ -84,6 +91,13 @@ type ApiBacktestResponse = {
     comparison: ReturnType<typeof compareBacktestStrategies>;
   }>;
 };
+
+const FEEDBACK_ACTIONS = new Set<TradeFeedbackAction>([
+  "took_trade",
+  "skipped_trade",
+  "broke_rules",
+  "review_later",
+]);
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -380,6 +394,60 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/settings") {
+    json(res, 200, withDb((db) => readTraderSettings(db)));
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/settings") {
+    try {
+      const payload = await readBody(req);
+      const body = typeof payload === "object" && payload !== null ? payload : {};
+      json(res, 200, withDb((db) => saveTraderSettings(db, body)));
+    } catch (err) {
+      json(res, 400, {
+        error: "bad_settings",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/feedback") {
+    json(res, 200, {
+      feedback: withDb((db) => listRecentTradeFeedback(db, 30)),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/feedback") {
+    try {
+      const payload = await readBody(req);
+      const body = typeof payload === "object" && payload !== null ? payload : {};
+      const action = "action" in body ? body.action : null;
+      if (typeof action !== "string" || !FEEDBACK_ACTIONS.has(action as TradeFeedbackAction)) {
+        throw new Error("feedback action must be one of took_trade/skipped_trade/broke_rules/review_later");
+      }
+      const feedback = withDb((db) =>
+        recordTradeFeedback(db, {
+          journalId: "journalId" in body ? Number(body.journalId) : null,
+          action: action as TradeFeedbackAction,
+          note: "note" in body && typeof body.note === "string" ? body.note : "",
+        }),
+      );
+      json(res, 200, {
+        feedback,
+        recent: withDb((db) => listRecentTradeFeedback(db, 30)),
+      });
+    } catch (err) {
+      json(res, 400, {
+        error: "bad_feedback",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/history-analysis") {
     const analysis = withDb((db) =>
       buildPastTradeAnalysis(readImportedTradesForSymbols(db, SUPPORTED_SYMBOLS)),
@@ -585,10 +653,22 @@ function renderApp(): string {
       letter-spacing: 0.12em;
       text-transform: uppercase;
     }
+    .capital-panel {
+      margin-top: 16px;
+      margin-bottom: 18px;
+    }
     .quick-row {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
+    }
+    .settings-row label {
+      min-width: 130px;
+      flex: 1 1 130px;
+    }
+    .settings-row input {
+      padding: 10px 11px;
+      border-radius: 12px;
     }
     .chip {
       border: 1px solid var(--line);
@@ -838,6 +918,33 @@ function renderApp(): string {
     <section class="layout">
       <div class="plate card">
         <h2>Trade intake</h2>
+        <div class="quick-panel capital-panel">
+          <strong>Capital settings</strong>
+          <div class="quick-row settings-row">
+            <label>Total futures capital
+              <input id="capital-budget" inputmode="decimal" value="100">
+            </label>
+            <label>Default margin
+              <input id="default-margin" inputmode="decimal" value="25">
+            </label>
+            <label>Sniper margin
+              <input id="sniper-margin" inputmode="decimal" value="10">
+            </label>
+            <label>Medium margin
+              <input id="medium-margin" inputmode="decimal" value="25">
+            </label>
+            <label>Core margin
+              <input id="core-margin" inputmode="decimal" value="50">
+            </label>
+            <label>Daily loss stop
+              <input id="max-daily-loss" inputmode="decimal" value="25">
+            </label>
+          </div>
+          <div class="quick-row">
+            <button id="save-settings" class="chip" type="button">Save capital rules</button>
+            <span id="settings-status" class="pill">settings local</span>
+          </div>
+        </div>
         <form id="trade-form">
           <label>Symbol
             <select name="symbol">
@@ -932,6 +1039,10 @@ function renderApp(): string {
         <h2>Recent journal</h2>
         <div id="journal" class="journal"><div class="empty">Loading journal...</div></div>
         </div>
+        <div class="model-panel">
+        <h2>Quick feedback</h2>
+        <div id="feedback-log" class="journal"><div class="empty">No feedback yet. Use the Took / Skipped / Broke rules buttons on a journal row.</div></div>
+        </div>
       </aside>
     </section>
   </main>
@@ -943,10 +1054,13 @@ function renderApp(): string {
     const historyEl = document.querySelector("#history-analysis");
     const modelEl = document.querySelector("#model-output");
     const backtestEl = document.querySelector("#backtest-output");
+    const feedbackEl = document.querySelector("#feedback-log");
     const scanModelButton = document.querySelector("#scan-model");
     const runBacktestButton = document.querySelector("#run-backtest");
+    const saveSettingsButton = document.querySelector("#save-settings");
     const autoPollToggle = document.querySelector("#auto-poll");
     const scanMetaEl = document.querySelector("#scan-meta");
+    const settingsStatusEl = document.querySelector("#settings-status");
     const telegramStatusEl = document.querySelector("#telegram-status");
     let saveNext = false;
     let autoPollTimer = null;
@@ -972,6 +1086,35 @@ function renderApp(): string {
       }
       if (!payload.generatedFromSignalId) delete payload.generatedFromSignalId;
       return payload;
+    }
+
+    function settingInput(id) {
+      return document.querySelector("#" + id);
+    }
+
+    function settingsPayload() {
+      return {
+        capitalBudgetQuote: num(settingInput("capital-budget").value),
+        defaultMarginQuote: num(settingInput("default-margin").value),
+        sniperMarginQuote: num(settingInput("sniper-margin").value),
+        mediumMarginQuote: num(settingInput("medium-margin").value),
+        coreMarginQuote: num(settingInput("core-margin").value),
+        maxDailyLossQuote: num(settingInput("max-daily-loss").value),
+      };
+    }
+
+    function applySettings(settings) {
+      settingInput("capital-budget").value = settings.capitalBudgetQuote;
+      settingInput("default-margin").value = settings.defaultMarginQuote;
+      settingInput("sniper-margin").value = settings.sniperMarginQuote;
+      settingInput("medium-margin").value = settings.mediumMarginQuote;
+      settingInput("core-margin").value = settings.coreMarginQuote;
+      settingInput("max-daily-loss").value = settings.maxDailyLossQuote;
+      const marginEl = form.elements.namedItem("marginQuote");
+      if (marginEl && (!marginEl.value || marginEl.value === "12")) {
+        marginEl.value = settings.defaultMarginQuote;
+      }
+      settingsStatusEl.textContent = "capital " + settings.capitalBudgetQuote + " USDT · default " + settings.defaultMarginQuote + " USDT";
     }
 
     function fillIntakeFromPlan(plan) {
@@ -1101,8 +1244,19 @@ function renderApp(): string {
           "<p><b>Note:</b> " + escapeHtml(e.journalNote) + "</p>" +
           "<p>Risk " + e.estimatedLossQuote.toFixed(2) + " USDT → reward " + e.estimatedRewardQuote.toFixed(2) + " USDT (" + e.riskRewardRatio.toFixed(2) + "R)</p>" +
           renderConflictList(e.conflicts) +
+          "<div class='quick-row feedback-row'>" +
+            "<button class='chip' type='button' data-feedback='took_trade' data-journal-id='" + e.id + "'>Took trade</button>" +
+            "<button class='chip' type='button' data-feedback='skipped_trade' data-journal-id='" + e.id + "'>Skipped</button>" +
+            "<button class='chip warn' type='button' data-feedback='broke_rules' data-journal-id='" + e.id + "'>Broke rules</button>" +
+            "<button class='chip' type='button' data-feedback='review_later' data-journal-id='" + e.id + "'>Review later</button>" +
+          "</div>" +
         "</article>";
       }).join("");
+      journalEl.querySelectorAll("button[data-feedback]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          recordFeedback(btn.dataset.feedback, Number(btn.dataset.journalId), "");
+        });
+      });
     }
 
     function pct(value) {
@@ -1112,6 +1266,27 @@ function renderApp(): string {
     function money(value) {
       const n = Number(value || 0);
       return (n >= 0 ? "+" : "") + n.toFixed(2) + " USDT";
+    }
+
+    function feedbackLabel(action) {
+      if (action === "took_trade") return "Took trade";
+      if (action === "skipped_trade") return "Skipped";
+      if (action === "broke_rules") return "Broke rules";
+      return "Review later";
+    }
+
+    function renderFeedback(items) {
+      if (!items || items.length === 0) {
+        feedbackEl.innerHTML = "<div class='empty'>No feedback yet. Use the journal buttons to create accountability receipts.</div>";
+        return;
+      }
+      feedbackEl.innerHTML = items.map((item) =>
+        "<article class='entry'>" +
+          "<div class='entry-head'><strong>" + escapeHtml(feedbackLabel(item.action)) + "</strong><span class='pill'>TJ#" + (item.journalId ?? "manual") + "</span></div>" +
+          "<p>" + escapeHtml(item.note || "quick click") + "</p>" +
+          "<p>" + new Date(item.createdAtMs).toLocaleString() + "</p>" +
+        "</article>"
+      ).join("");
     }
 
     function renderHistoryAnalysis(analysis) {
@@ -1219,6 +1394,45 @@ function renderApp(): string {
       renderJournal(body.entries ?? []);
     }
 
+    async function loadSettings() {
+      const res = await fetch("/api/settings");
+      const body = await res.json();
+      if (res.ok) applySettings(body);
+    }
+
+    async function saveSettings() {
+      settingsStatusEl.textContent = "saving...";
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(settingsPayload()),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        settingsStatusEl.textContent = "settings failed";
+        return;
+      }
+      applySettings(body);
+    }
+
+    async function loadFeedback() {
+      const res = await fetch("/api/feedback");
+      const body = await res.json();
+      renderFeedback(body.feedback ?? []);
+    }
+
+    async function recordFeedback(action, journalId, note) {
+      const res = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, journalId, note }),
+      });
+      const body = await res.json();
+      if (res.ok) {
+        renderFeedback(body.recent ?? []);
+      }
+    }
+
     async function loadHistoryAnalysis() {
       const res = await fetch("/api/history-analysis");
       const body = await res.json();
@@ -1287,6 +1501,12 @@ function renderApp(): string {
       });
     });
 
+    saveSettingsButton.addEventListener("click", () => {
+      saveSettings().catch((err) => {
+        settingsStatusEl.textContent = "settings failed: " + String(err);
+      });
+    });
+
     form.addEventListener("click", (event) => {
       if (event.target instanceof HTMLButtonElement && event.target.type === "submit") {
         saveNext = event.target.dataset.save === "1";
@@ -1338,6 +1558,12 @@ function renderApp(): string {
 
     loadJournal().catch((err) => {
       journalEl.innerHTML = "<div class='empty'>Journal load failed: " + String(err) + "</div>";
+    });
+    loadSettings().catch((err) => {
+      settingsStatusEl.textContent = "settings failed: " + String(err);
+    });
+    loadFeedback().catch((err) => {
+      feedbackEl.innerHTML = "<div class='empty'>Feedback load failed: " + escapeHtml(String(err)) + "</div>";
     });
 
     loadHistoryAnalysis().catch((err) => {
