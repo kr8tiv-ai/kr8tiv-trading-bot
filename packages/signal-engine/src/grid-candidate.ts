@@ -20,14 +20,23 @@ export type GridTradingCandidate = {
   gridBacktestProfitFactor: number | null;
   contextBias: FuturesContextAssessment["bias"];
   contextCrowding: FuturesContextAssessment["crowding"];
+  fundamentalPosture: "supportive" | "caution" | "hostile" | null;
+  fundamentalScore: number | null;
   blockers: string[];
   notes: string[];
+};
+
+export type GridCandidateFundamentals = {
+  posture: "supportive" | "caution" | "hostile";
+  score: number;
+  notes?: readonly string[];
 };
 
 export type ScoreGridTradingCandidateInput = {
   plan: AdaptiveGridPlan;
   comparison: StrategyBacktestComparison;
   context: FuturesContextAssessment;
+  fundamentals?: GridCandidateFundamentals;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -62,6 +71,15 @@ export function scoreGridTradingCandidate(
   if (input.context.crowding !== "balanced" && input.context.score >= 60) {
     blockers.push("crowded futures context is hostile to passive grid entries");
   }
+  if (input.fundamentals?.posture === "hostile") {
+    blockers.push("fundamentals are hostile for this asset");
+  }
+  if (input.fundamentals?.posture === "caution") {
+    notes.push("fundamentals are only caution; paper-test smaller before live grid execution");
+  }
+  for (const note of input.fundamentals?.notes ?? []) {
+    notes.push(`fundamentals: ${note}`);
+  }
   for (const warning of input.plan.warnings) {
     if (warning.includes("compressed") || warning.includes("capital")) {
       blockers.push(warning);
@@ -79,9 +97,17 @@ export function scoreGridTradingCandidate(
   const edgeScore = gridNet * 6 + Math.min(pf, 3) * 8;
   const contextPenalty =
     input.context.crowding === "balanced" ? 0 : input.context.score * 0.25;
+  const fundamentalAdjustment =
+    input.fundamentals?.posture === "supportive"
+      ? 5
+      : input.fundamentals?.posture === "caution"
+        ? -4
+        : input.fundamentals?.posture === "hostile"
+          ? -20
+          : 0;
   const warningPenalty = input.plan.warnings.length * 5;
   const score = clamp(
-    Math.round(42 + levelScore + edgeScore - contextPenalty - warningPenalty),
+    Math.round(42 + levelScore + edgeScore + fundamentalAdjustment - contextPenalty - warningPenalty),
     0,
     100,
   );
@@ -110,6 +136,8 @@ export function scoreGridTradingCandidate(
     gridBacktestProfitFactor: grid?.profitFactor ?? null,
     contextBias: input.context.bias,
     contextCrowding: input.context.crowding,
+    fundamentalPosture: input.fundamentals?.posture ?? null,
+    fundamentalScore: input.fundamentals?.score ?? null,
     blockers,
     notes,
   };

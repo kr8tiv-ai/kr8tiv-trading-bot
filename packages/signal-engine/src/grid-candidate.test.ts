@@ -122,4 +122,21 @@ describe("scoreGridTradingCandidate", () => {
     expect(scored.blockers).toContain("adaptive-grid is not the best recent replay");
     expect(scored.blockers).toContain("crowded futures context is hostile to passive grid entries");
   });
+
+  it("blocks paper-grid readiness when fundamentals are hostile", () => {
+    const scored = scoreGridTradingCandidate({
+      plan: plan(),
+      comparison: comparison(),
+      context: context(),
+      fundamentals: {
+        posture: "hostile",
+        score: 28,
+        notes: ["CoinGecko data is stale; do not overweight fundamentals until refreshed"],
+      },
+    });
+
+    expect(scored.action).toBe("avoid");
+    expect(scored.blockers).toContain("fundamentals are hostile for this asset");
+    expect(scored.fundamentalPosture).toBe("hostile");
+  });
 });

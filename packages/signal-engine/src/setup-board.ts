@@ -16,10 +16,18 @@ export type SetupBoardRow = {
   backtestNetPnlPct: number | null;
   contextBias: FuturesContextAssessment["bias"];
   contextScore: number;
+  fundamentalPosture: "supportive" | "caution" | "hostile" | null;
+  fundamentalScore: number | null;
   gridLevelCount: number;
   styleConflictCount: number;
   blockers: string[];
   notes: string[];
+};
+
+export type SetupBoardFundamentals = {
+  posture: "supportive" | "caution" | "hostile";
+  score: number;
+  notes?: readonly string[];
 };
 
 export type BuildSetupBoardRowInput = {
@@ -27,6 +35,7 @@ export type BuildSetupBoardRowInput = {
   comparison: StrategyBacktestComparison;
   context: FuturesContextAssessment;
   gridPlan: AdaptiveGridPlan;
+  fundamentals?: SetupBoardFundamentals;
   styleConflictCount?: number;
 };
 
@@ -82,6 +91,15 @@ export function buildSetupBoardRow(
   if (idea && contextOpposes(idea.direction, input.context)) {
     blockers.push("context is strongly against the model side");
   }
+  if (input.fundamentals?.posture === "hostile") {
+    blockers.push("fundamentals are hostile for this asset");
+  }
+  if (input.fundamentals?.posture === "caution") {
+    notes.push("fundamentals are only caution; reduce size or require cleaner confirmation");
+  }
+  for (const note of input.fundamentals?.notes ?? []) {
+    notes.push(`fundamentals: ${note}`);
+  }
   if (input.gridPlan.warnings.length > 0) {
     notes.push(input.gridPlan.warnings.join("; "));
   }
@@ -104,11 +122,19 @@ export function buildSetupBoardRow(
       : idea && contextOpposes(idea.direction, input.context)
         ? -25
         : 0;
+  const fundamentalBoost =
+    input.fundamentals?.posture === "supportive"
+      ? 6
+      : input.fundamentals?.posture === "caution"
+        ? -4
+        : input.fundamentals?.posture === "hostile"
+          ? -22
+          : 0;
   const gridBoost =
     strategy === "adaptive-grid" && input.gridPlan.levels.length > 0 ? 5 : 0;
   const stylePenalty = styleConflictCount * 5;
   const score = clamp(
-    Math.round((idea?.confidence ?? 0) * 100 + backtestBoost + contextBoost + gridBoost - stylePenalty),
+    Math.round((idea?.confidence ?? 0) * 100 + backtestBoost + contextBoost + fundamentalBoost + gridBoost - stylePenalty),
     0,
     100,
   );
@@ -131,6 +157,8 @@ export function buildSetupBoardRow(
     backtestNetPnlPct: best?.netPnlPct ?? null,
     contextBias: input.context.bias,
     contextScore: input.context.score,
+    fundamentalPosture: input.fundamentals?.posture ?? null,
+    fundamentalScore: input.fundamentals?.score ?? null,
     gridLevelCount: input.gridPlan.levels.length,
     styleConflictCount,
     blockers,

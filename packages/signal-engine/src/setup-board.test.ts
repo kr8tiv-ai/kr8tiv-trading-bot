@@ -152,4 +152,30 @@ describe("buildSetupBoardRow", () => {
     expect(row.action).toBe("wait");
     expect(row.blockers).toContain("recent backtest has no positive edge");
   });
+
+  it("waits when broad fundamentals are hostile even if the technical setup agrees", () => {
+    const row = buildSetupBoardRow({
+      scan: scan("long"),
+      comparison: comparison({
+        strategy: "adaptive-grid",
+        trades: [{ direction: "long", entryTimeMs: 1, exitTimeMs: 2, entryPrice: 1, exitPrice: 2, pnlPct: 1.2, exitReason: "target" }],
+        netPnlPct: 2.4,
+        winRate: 0.66,
+        profitFactor: 2.1,
+        maxDrawdownPct: 0.5,
+        warnings: [],
+      }),
+      context: context("long"),
+      gridPlan: grid(),
+      fundamentals: {
+        posture: "hostile",
+        score: 31,
+        notes: ["24h move is overextended; avoid late chase entries"],
+      },
+    });
+
+    expect(row.action).toBe("wait");
+    expect(row.blockers).toContain("fundamentals are hostile for this asset");
+    expect(row.fundamentalPosture).toBe("hostile");
+  });
 });

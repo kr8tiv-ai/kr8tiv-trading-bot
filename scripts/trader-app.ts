@@ -42,7 +42,10 @@ import {
   startTelegramDispatcher,
   type TelegramDispatcher,
 } from "./trader-app-telegram.js";
-import { fetchAssetFundamentals } from "./fundamentals.js";
+import {
+  fetchAssetFundamentals,
+  type AssetFundamentalAssessment,
+} from "./fundamentals.js";
 import { ingestFuturesHistory } from "./history-ingest.js";
 import {
   listStrategyEffectiveness,
@@ -473,6 +476,7 @@ async function handleGridCandidates(
       ? requestedLeverage
       : 20;
   const settings = withDb((db) => readTraderSettings(db));
+  const fundamentalsBySymbol = await tryFetchFundamentalsBySymbol();
   const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
   const candidates = await Promise.all(
     SUPPORTED_SYMBOLS.map(async (symbol) => {
@@ -494,10 +498,12 @@ async function handleGridCandidates(
         riskMode: "medium",
         gridCount: 6,
       });
+      const fundamentals = fundamentalsBySymbol.get(symbol);
       return scoreGridTradingCandidate({
         plan,
         comparison,
         context: assessFuturesContext(context),
+        ...(fundamentals ? { fundamentals } : {}),
       });
     }),
   );
@@ -521,6 +527,21 @@ async function handleMarketContext(): Promise<ApiMarketContextResponse> {
   };
 }
 
+async function tryFetchFundamentalsBySymbol(): Promise<
+  Map<string, AssetFundamentalAssessment>
+> {
+  try {
+    const response = await fetchAssetFundamentals();
+    return new Map(
+      response.assessments.map((assessment) => [assessment.symbol, assessment]),
+    );
+  } catch {
+    // Fundamentals are a confirmation/veto layer, not the primary futures feed.
+    // If CoinGecko is rate-limited or unavailable, keep the cockpit usable.
+    return new Map();
+  }
+}
+
 async function handleSetupBoard(url: URL): Promise<ApiSetupBoardResponse> {
   const requestedLimit = Number(url.searchParams.get("limit") ?? "160");
   const limit =
@@ -537,6 +558,7 @@ async function handleSetupBoard(url: URL): Promise<ApiSetupBoardResponse> {
     Number.isFinite(requestedMargin) && requestedMargin > 0 ? requestedMargin : 25;
   const settings = withDb((db) => readTraderSettings(db));
   const fingerprints = loadFingerprints(SUPPORTED_SYMBOLS);
+  const fundamentalsBySymbol = await tryFetchFundamentalsBySymbol();
   const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
   const generatedAtMs = Date.now();
   const rows = await Promise.all(
@@ -577,11 +599,13 @@ async function handleSetupBoard(url: URL): Promise<ApiSetupBoardResponse> {
         },
         fingerprints.get(symbol),
       ).length;
+      const fundamentals = fundamentalsBySymbol.get(symbol);
       return buildSetupBoardRow({
         scan,
         comparison,
         context: assessFuturesContext(context),
         gridPlan,
+        ...(fundamentals ? { fundamentals } : {}),
         styleConflictCount,
       });
     }),
@@ -1939,7 +1963,7 @@ function renderApp(): string {
           const notes = candidate.notes ?? [];
           return "<article class='entry'>" +
             "<div class='entry-head'><strong>" + escapeHtml(candidate.symbol) + " grid candidate</strong><span class='pill " + actionClass + "'>" + escapeHtml(candidate.action.replace("_", " ")) + " · " + candidate.score + "/100</span></div>" +
-            "<p><span class='pill'>levels " + candidate.gridLevelCount + "</span> <span class='pill'>range " + (Number(candidate.rangePct || 0) * 100).toFixed(2) + "%</span> <span class='pill'>best " + escapeHtml(candidate.bestBacktestStrategy || "none") + "</span> <span class='pill'>context " + escapeHtml(candidate.contextCrowding) + "</span></p>" +
+            "<p><span class='pill'>levels " + candidate.gridLevelCount + "</span> <span class='pill'>range " + (Number(candidate.rangePct || 0) * 100).toFixed(2) + "%</span> <span class='pill'>best " + escapeHtml(candidate.bestBacktestStrategy || "none") + "</span> <span class='pill'>context " + escapeHtml(candidate.contextCrowding) + "</span> <span class='pill'>fund " + escapeHtml(candidate.fundamentalPosture || "n/a") + (candidate.fundamentalScore === null ? "" : " " + candidate.fundamentalScore + "/100") + "</span></p>" +
             "<p>Grid replay net " + (candidate.gridBacktestNetPnlPct === null ? "n/a" : Number(candidate.gridBacktestNetPnlPct || 0).toFixed(2) + "%") +
             " · win " + (candidate.gridBacktestWinRate === null ? "n/a" : pct(candidate.gridBacktestWinRate)) +
             " · PF " + (candidate.gridBacktestProfitFactor === null ? "n/a" : Number(candidate.gridBacktestProfitFactor || 0).toFixed(2)) +
@@ -2025,7 +2049,7 @@ function renderApp(): string {
           const notes = row.notes ?? [];
           return "<article class='entry'>" +
             "<div class='entry-head'><strong>" + escapeHtml(row.symbol) + " " + escapeHtml(row.action.replace("_", " ").toUpperCase()) + "</strong><span class='pill " + actionClass + "'>" + row.score + "/100</span></div>" +
-            "<p><span class='pill'>" + escapeHtml(row.primaryDirection) + "</span> <span class='pill'>" + escapeHtml(row.primaryStrategy || "no setup") + "</span> <span class='pill'>best " + escapeHtml(row.bestBacktestStrategy || "none") + "</span> <span class='pill'>context " + escapeHtml(row.contextBias) + " " + row.contextScore + "/100</span> <span class='pill'>grid " + row.gridLevelCount + " levels</span> <span class='pill'>style " + row.styleConflictCount + "</span></p>" +
+            "<p><span class='pill'>" + escapeHtml(row.primaryDirection) + "</span> <span class='pill'>" + escapeHtml(row.primaryStrategy || "no setup") + "</span> <span class='pill'>best " + escapeHtml(row.bestBacktestStrategy || "none") + "</span> <span class='pill'>context " + escapeHtml(row.contextBias) + " " + row.contextScore + "/100</span> <span class='pill'>fund " + escapeHtml(row.fundamentalPosture || "n/a") + (row.fundamentalScore === null ? "" : " " + row.fundamentalScore + "/100") + "</span> <span class='pill'>grid " + row.gridLevelCount + " levels</span> <span class='pill'>style " + row.styleConflictCount + "</span></p>" +
             (row.backtestNetPnlPct !== null ? "<p>Recent best backtest net: " + Number(row.backtestNetPnlPct || 0).toFixed(2) + "%</p>" : "<p>Recent best backtest net: no positive edge</p>") +
             (blockers.length ? "<p><b>Blockers:</b> " + blockers.map(escapeHtml).join(" | ") + "</p>" : "") +
             (notes.length ? "<ul>" + notes.slice(0, 4).map((note) => "<li>" + escapeHtml(note) + "</li>").join("") + "</ul>" : "") +
