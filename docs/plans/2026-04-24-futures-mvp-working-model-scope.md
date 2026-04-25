@@ -70,6 +70,14 @@ The Backtest Lab should replay the same candles the signal engine uses and rank 
 - whether grid or breakout is currently a better fit
 - warnings when there is not enough data or the market is too compressed/wide for a clean grid
 
+The Grid Planner is separate from live execution. It should:
+- build BTC/ETH/SOL futures grid levels from the same MEXC candles used by Backtest Lab
+- use saved capital settings and selected leverage
+- allocate only a capped slice of configured futures capital
+- show long/short levels with entry, take-profit, stop-loss, margin, and notional
+- refuse to invent levels when the range is compressed, the budget is invalid, or leverage makes the plan unsafe
+- remain decision-support only until a later phase explicitly designs live grid execution
+
 ## Required Local Product Loop
 
 The local app and CLI should support this loop:
@@ -91,7 +99,7 @@ pnpm signals:scan --style --symbols 'BTCUSDT,ETHUSDT,SOLUSDT'
 pnpm signals:watch --symbols 'BTCUSDT,ETHUSDT,SOLUSDT'
 pnpm model:scan --symbols 'BTCUSDT,ETHUSDT,SOLUSDT' --notional 12
 pnpm futures:status # requires mexc-futures-access + mexc-futures-secret WCM entries
-pnpm trade:app # local cockpit with quick trade controls, model scan, history analysis, and backtest lab
+pnpm trade:app # local cockpit with quick trade controls, model scan, grid planner, history analysis, and backtest lab
 pnpm trade:review --symbol BTCUSDT --side long --horizon scalp --mode sniper --leverage 75 --margin 12 --entry 93500 --stop 93140 --target 94400 --why "15m reclaim with momentum confirmation after liquidity sweep" --note "planned, not revenge"
 pnpm trade:journal --symbol BTCUSDT --side long --horizon scalp --mode sniper --leverage 75 --margin 12 --entry 93500 --stop 93140 --target 94400 --why "15m reclaim with momentum confirmation after liquidity sweep" --note "planned, not revenge"
 ```

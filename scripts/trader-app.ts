@@ -14,6 +14,7 @@ import { createLogger } from "@kr8tiv/logger";
 import { MEXCFuturesClient } from "@kr8tiv/mexc-futures";
 import { WindowsCredentialManagerProvider } from "@kr8tiv/secrets";
 import {
+  buildAdaptiveGridPlan,
   buildTradePlansFromScan,
   compareBacktestStrategies,
 } from "@kr8tiv/signal-engine";
@@ -90,6 +91,13 @@ type ApiBacktestResponse = {
     currentPrice: number;
     comparison: ReturnType<typeof compareBacktestStrategies>;
   }>;
+};
+
+type ApiGridPlanResponse = {
+  generatedAtMs: number;
+  interval: "Min15";
+  limit: number;
+  plans: Array<ReturnType<typeof buildAdaptiveGridPlan>>;
 };
 
 const FEEDBACK_ACTIONS = new Set<TradeFeedbackAction>([
@@ -359,6 +367,44 @@ async function handleBacktest(url: URL): Promise<ApiBacktestResponse> {
   };
 }
 
+async function handleGridPlan(url: URL): Promise<ApiGridPlanResponse> {
+  const requestedLimit = Number(url.searchParams.get("limit") ?? "120");
+  const limit =
+    Number.isInteger(requestedLimit) && requestedLimit >= 80 && requestedLimit <= 500
+      ? requestedLimit
+      : 120;
+  const requestedLeverage = Number(url.searchParams.get("leverage") ?? "20");
+  const leverage =
+    Number.isFinite(requestedLeverage) && requestedLeverage >= 1 && requestedLeverage <= 100
+      ? requestedLeverage
+      : 20;
+  const settings = withDb((db) => readTraderSettings(db));
+  const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
+  const plans = await Promise.all(
+    SUPPORTED_SYMBOLS.map(async (symbol) => {
+      const candles = await client.fetchCandles({
+        symbol,
+        interval: "Min15",
+        limit,
+      });
+      return buildAdaptiveGridPlan({
+        symbol,
+        candles,
+        capitalQuote: settings.capitalBudgetQuote,
+        leverage,
+        riskMode: "medium",
+        gridCount: 6,
+      });
+    }),
+  );
+  return {
+    generatedAtMs: Date.now(),
+    interval: "Min15",
+    limit,
+    plans,
+  };
+}
+
 function countTodaysEntries(entries: TradeJournalEntry[]): number {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   return entries.filter((entry) => entry.createdAtMs >= cutoff).length;
@@ -474,6 +520,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     } catch (err) {
       json(res, 500, {
         error: "backtest_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/grid-plan") {
+    try {
+      json(res, 200, await handleGridPlan(url));
+    } catch (err) {
+      json(res, 500, {
+        error: "grid_plan_failed",
         message: err instanceof Error ? err.message : String(err),
       });
     }
@@ -906,6 +964,7 @@ function renderApp(): string {
         <div class="scan-controls">
           <button id="scan-model" type="button">Scan live BTC/ETH/SOL model</button>
           <button id="run-backtest" type="button" class="secondary">Compare breakout vs grid edges</button>
+          <button id="build-grid" type="button" class="secondary">Build futures grid plan</button>
           <label class="toggle">
             <input id="auto-poll" type="checkbox" checked>
             <span>Auto-refresh every 30s</span>
@@ -1026,6 +1085,10 @@ function renderApp(): string {
           <div id="backtest-output" class="journal"><div class="empty">Run the backtest to compare breakout + trailing-stop vs adaptive futures grid on recent MEXC candles.</div></div>
         </div>
         <div class="model-panel">
+          <h3>Grid planner</h3>
+          <div id="grid-output" class="journal"><div class="empty">Build a medium-risk futures grid plan for BTC, ETH, and SOL using your saved capital rules. Planner only; no live grid orders fire.</div></div>
+        </div>
+        <div class="model-panel">
           <h3>Live model drafts</h3>
           <div id="model-output" class="journal"><div class="empty">Run the live model scan to pull MEXC futures structure.</div></div>
         </div>
@@ -1054,9 +1117,11 @@ function renderApp(): string {
     const historyEl = document.querySelector("#history-analysis");
     const modelEl = document.querySelector("#model-output");
     const backtestEl = document.querySelector("#backtest-output");
+    const gridEl = document.querySelector("#grid-output");
     const feedbackEl = document.querySelector("#feedback-log");
     const scanModelButton = document.querySelector("#scan-model");
     const runBacktestButton = document.querySelector("#run-backtest");
+    const buildGridButton = document.querySelector("#build-grid");
     const saveSettingsButton = document.querySelector("#save-settings");
     const autoPollToggle = document.querySelector("#auto-poll");
     const scanMetaEl = document.querySelector("#scan-meta");
@@ -1385,6 +1450,35 @@ function renderApp(): string {
         }).join("");
     }
 
+    function renderGridPlan(data) {
+      const stamp = data.generatedAtMs ? new Date(data.generatedAtMs).toLocaleTimeString() : "";
+      gridEl.innerHTML =
+        "<div class='model-meta'><span>15m grid map " + escapeHtml(stamp) + " · " + data.limit + " candles · planner only</span></div>" +
+        data.plans.map((plan) => {
+          const warnings = plan.warnings ?? [];
+          const levels = plan.levels ?? [];
+          const shownLevels = levels.slice(0, 6).map((level) =>
+            "<div class='strategy-row'>" +
+              "<span class='pill " + (level.side === "long" ? "ok" : "pending") + "'>" + escapeHtml(level.side.toUpperCase()) + "</span>" +
+              "<span class='pill'>entry " + Number(level.entryPrice || 0).toFixed(plan.symbol === "SOLUSDT" ? 4 : 2) + "</span>" +
+              "<span class='pill'>TP " + Number(level.takeProfitPrice || 0).toFixed(plan.symbol === "SOLUSDT" ? 4 : 2) + "</span>" +
+              "<span class='pill block'>SL " + Number(level.stopLossPrice || 0).toFixed(plan.symbol === "SOLUSDT" ? 4 : 2) + "</span>" +
+              "<span class='pill'>" + Number(level.marginQuote || 0).toFixed(2) + " margin</span>" +
+              "<span class='pill'>" + Number(level.notionalQuote || 0).toFixed(2) + " notional</span>" +
+            "</div>"
+          ).join("");
+          return "<article class='entry'>" +
+            "<div class='entry-head'><strong>" + escapeHtml(plan.symbol) + " adaptive futures grid</strong><span class='pill " + (levels.length ? "ok" : "block") + "'>" + levels.length + " levels</span></div>" +
+            "<p>Range " + Number(plan.rangeLow || 0).toFixed(plan.symbol === "SOLUSDT" ? 4 : 2) + " → " + Number(plan.rangeHigh || 0).toFixed(plan.symbol === "SOLUSDT" ? 4 : 2) +
+            " (" + (Number(plan.rangePct || 0) * 100).toFixed(2) + "%) · current " + Number(plan.currentPrice || 0).toFixed(plan.symbol === "SOLUSDT" ? 4 : 2) + "</p>" +
+            "<p><span class='pill'>" + escapeHtml(plan.riskMode) + "</span> <span class='pill'>" + Number(plan.allocatedCapitalQuote || 0).toFixed(2) + " USDT allocated</span>" +
+            (levels[0] ? " <span class='pill'>" + levels[0].leverage + "x</span>" : "") + "</p>" +
+            (warnings.length ? "<p>" + warnings.map(escapeHtml).join(" | ") + "</p>" : "") +
+            (shownLevels || "<div class='empty'>No grid levels. The range or capital settings failed the planner guardrails.</div>") +
+          "</article>";
+        }).join("");
+    }
+
     async function loadJournal() {
       const res = await fetch("/api/journal");
       const body = await res.json();
@@ -1553,6 +1647,22 @@ function renderApp(): string {
         renderBacktest(body);
       } catch (err) {
         backtestEl.innerHTML = "<div class='empty'>Backtest failed: " + escapeHtml(String(err)) + "</div>";
+      }
+    });
+
+    buildGridButton.addEventListener("click", async () => {
+      gridEl.innerHTML = "<div class='empty'>Building BTC/ETH/SOL futures grid plan from live MEXC candles...</div>";
+      try {
+        const leverage = encodeURIComponent(formPayload().leverage || 20);
+        const res = await fetch("/api/grid-plan?limit=120&leverage=" + leverage);
+        const body = await res.json();
+        if (!res.ok) {
+          gridEl.innerHTML = "<div class='empty'>Grid planner failed: " + escapeHtml(body.message) + "</div>";
+          return;
+        }
+        renderGridPlan(body);
+      } catch (err) {
+        gridEl.innerHTML = "<div class='empty'>Grid planner failed: " + escapeHtml(String(err)) + "</div>";
       }
     });
 
