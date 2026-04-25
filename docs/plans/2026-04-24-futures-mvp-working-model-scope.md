@@ -120,13 +120,14 @@ The local app and CLI should support this loop:
 1. Scan MEXC futures BTC/ETH/SOL.
 2. Show candidate long/short setup with entry, invalidation, targets, and confidence.
 3. Matt manually inputs or edits the trade idea.
-4. Accountability layer asks why the trade exists.
-5. Risk layer blocks bad leverage mode, bad stops, bad targets, and poor risk/reward.
-6. Journal entry is saved whether the trade is approved or blocked.
-7. Future style analysis learns from both executed trades and rejected/blocked plans.
-8. Backtest Lab ranks the active strategy family before Matt risks capital.
-9. Past-trade analysis shows symbol + direction leaks so the app can say, "this is the kind of trade you usually mishandle."
-10. Strategy memory stores each Backtest Lab run and keeps a ranked view of breakout vs adaptive-grid effectiveness by symbol.
+4. Fast controls let Matt apply sniper/medium/core presets from saved capital rules instead of typing the same sizing/leverage choices every time.
+5. Accountability layer asks why the trade exists.
+6. Risk layer blocks bad leverage mode, bad stops, bad targets, and poor risk/reward.
+7. Journal entry is saved whether the trade is approved or blocked.
+8. Future style analysis learns from both executed trades and rejected/blocked plans.
+9. Backtest Lab ranks the active strategy family before Matt risks capital.
+10. Past-trade analysis shows symbol + direction leaks so the app can say, "this is the kind of trade you usually mishandle."
+11. Strategy memory stores each Backtest Lab run and keeps a ranked view of breakout vs adaptive-grid effectiveness by symbol.
 
 ## Current Commands
 

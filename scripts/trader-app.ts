@@ -1297,6 +1297,11 @@ function renderApp(): string {
           </label>
           <div class="quick-panel">
             <strong>Fast trade controls</strong>
+            <div class="quick-row" aria-label="risk mode presets">
+              <button class="chip warn" type="button" data-mode-preset="sniper">Sniper preset</button>
+              <button class="chip" type="button" data-mode-preset="medium">Medium preset</button>
+              <button class="chip" type="button" data-mode-preset="core">Core preset</button>
+            </div>
             <div class="quick-row" aria-label="capital presets">
               <button class="chip" type="button" data-capital="10">10 USDT probe</button>
               <button class="chip" type="button" data-capital="25">25 USDT medium</button>
@@ -1411,6 +1416,14 @@ function renderApp(): string {
     let autoPollTimer = null;
     let modelScanInFlight = false;
     let telegramEnabled = false;
+    let activeSettings = {
+      capitalBudgetQuote: 100,
+      defaultMarginQuote: 25,
+      sniperMarginQuote: 10,
+      mediumMarginQuote: 25,
+      coreMarginQuote: 50,
+      maxDailyLossQuote: 25,
+    };
 
     function num(value) {
       const n = Number(value);
@@ -1449,6 +1462,7 @@ function renderApp(): string {
     }
 
     function applySettings(settings) {
+      activeSettings = { ...activeSettings, ...settings };
       settingInput("capital-budget").value = settings.capitalBudgetQuote;
       settingInput("default-margin").value = settings.defaultMarginQuote;
       settingInput("sniper-margin").value = settings.sniperMarginQuote;
@@ -1460,6 +1474,57 @@ function renderApp(): string {
         marginEl.value = settings.defaultMarginQuote;
       }
       settingsStatusEl.textContent = "capital " + settings.capitalBudgetQuote + " USDT · default " + settings.defaultMarginQuote + " USDT";
+    }
+
+    function applyModePreset(mode) {
+      const presets = {
+        sniper: {
+          riskMode: "sniper",
+          horizon: "scalp",
+          leverage: 75,
+          marginQuote: activeSettings.sniperMarginQuote,
+          thesis: "Fast sniper idea: only valid if entry is immediate, stop is tight, and invalidation is respected.",
+          note: "Sniper preset applied. No averaging down. If it hesitates, skip.",
+        },
+        medium: {
+          riskMode: "medium",
+          horizon: "scalp",
+          leverage: 25,
+          marginQuote: activeSettings.mediumMarginQuote,
+          thesis: "Medium-risk setup: model, backtest, context, and personal style should mostly agree before entry.",
+          note: "Medium preset applied. Size is controlled; wait for confirmation instead of forcing.",
+        },
+        core: {
+          riskMode: "core",
+          horizon: "swing",
+          leverage: 15,
+          marginQuote: activeSettings.coreMarginQuote,
+          thesis: "Core setup: larger capital only when thesis is clean, invalidation is clear, and patience is justified.",
+          note: "Core preset applied. Lower leverage, stronger thesis, no impulse entry.",
+        },
+      };
+      const preset = presets[mode];
+      if (!preset) return;
+      for (const [name, value] of Object.entries({
+        riskMode: preset.riskMode,
+        horizon: preset.horizon,
+        leverage: preset.leverage,
+        marginQuote: preset.marginQuote,
+      })) {
+        const el = form.elements.namedItem(name);
+        if (el) el.value = value;
+      }
+      const thesisEl = form.elements.namedItem("thesis");
+      const noteEl = form.elements.namedItem("journalNote");
+      if (thesisEl && thesisEl.dataset.autofilled !== "0") {
+        thesisEl.value = preset.thesis;
+        thesisEl.dataset.autofilled = "1";
+      }
+      if (noteEl && noteEl.dataset.autofilled !== "0") {
+        noteEl.value = preset.note;
+        noteEl.dataset.autofilled = "1";
+      }
+      settingsStatusEl.textContent = mode + " preset · " + preset.marginQuote + " USDT margin · " + preset.leverage + "x";
     }
 
     function fillIntakeFromPlan(plan) {
@@ -2058,6 +2123,12 @@ function renderApp(): string {
         const margin = button.dataset.capital;
         const marginEl = form.elements.namedItem("marginQuote");
         if (marginEl && margin) marginEl.value = margin;
+      });
+    });
+
+    document.querySelectorAll("[data-mode-preset]").forEach((button) => {
+      button.addEventListener("click", () => {
+        applyModePreset(button.dataset.modePreset || "medium");
       });
     });
 
