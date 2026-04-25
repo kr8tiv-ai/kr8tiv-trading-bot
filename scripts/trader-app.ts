@@ -42,6 +42,7 @@ import {
   startTelegramDispatcher,
   type TelegramDispatcher,
 } from "./trader-app-telegram.js";
+import { fetchAssetFundamentals } from "./fundamentals.js";
 import { ingestFuturesHistory } from "./history-ingest.js";
 import {
   listStrategyEffectiveness,
@@ -727,6 +728,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/fundamentals") {
+    try {
+      json(res, 200, await fetchAssetFundamentals());
+    } catch (err) {
+      json(res, 500, {
+        error: "fundamentals_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/model-scan") {
     try {
       json(res, 200, await handleModelScan(url));
@@ -1240,6 +1253,7 @@ function renderApp(): string {
           <button id="refresh-effectiveness" type="button" class="secondary">Refresh strategy memory</button>
           <button id="build-grid" type="button" class="secondary">Build futures grid plan</button>
           <button id="score-grid" type="button" class="secondary">Score grid candidates</button>
+          <button id="refresh-fundamentals" type="button" class="secondary">Refresh fundamentals</button>
           <button id="refresh-context" type="button" class="secondary">Refresh funding + basis context</button>
           <button id="refresh-setup-board" type="button" class="secondary">Score setup board</button>
           <label class="toggle">
@@ -1387,6 +1401,10 @@ function renderApp(): string {
           <div id="context-output" class="journal"><div class="empty">Loading funding, basis, volume, and open-interest context...</div></div>
         </div>
         <div class="model-panel">
+          <h3>Fundamentals pulse</h3>
+          <div id="fundamentals-output" class="journal"><div class="empty">Loading BTC/ETH/SOL liquidity, market cap, and 24h move context...</div></div>
+        </div>
+        <div class="model-panel">
           <h3>Live model drafts</h3>
           <div id="model-output" class="journal"><div class="empty">Run the live model scan to pull MEXC futures structure.</div></div>
         </div>
@@ -1432,12 +1450,14 @@ function renderApp(): string {
     const gridEl = document.querySelector("#grid-output");
     const gridCandidatesEl = document.querySelector("#grid-candidates-output");
     const contextEl = document.querySelector("#context-output");
+    const fundamentalsEl = document.querySelector("#fundamentals-output");
     const feedbackEl = document.querySelector("#feedback-log");
     const scanModelButton = document.querySelector("#scan-model");
     const runBacktestButton = document.querySelector("#run-backtest");
     const refreshEffectivenessButton = document.querySelector("#refresh-effectiveness");
     const buildGridButton = document.querySelector("#build-grid");
     const scoreGridButton = document.querySelector("#score-grid");
+    const refreshFundamentalsButton = document.querySelector("#refresh-fundamentals");
     const refreshContextButton = document.querySelector("#refresh-context");
     const refreshSetupBoardButton = document.querySelector("#refresh-setup-board");
     const refreshAccountButton = document.querySelector("#refresh-account");
@@ -1948,6 +1968,22 @@ function renderApp(): string {
         }).join("");
     }
 
+    function renderFundamentals(data) {
+      const stamp = data.generatedAtMs ? new Date(data.generatedAtMs).toLocaleTimeString() : "";
+      fundamentalsEl.innerHTML =
+        "<div class='model-meta'><span>CoinGecko liquidity + market cap pulse " + escapeHtml(stamp) + " · confirmation/veto only</span></div>" +
+        (data.assessments ?? []).map((item) => {
+          const postureClass = item.posture === "supportive" ? "ok" : item.posture === "caution" ? "pending" : "block";
+          const notes = item.notes ?? [];
+          return "<article class='entry'>" +
+            "<div class='entry-head'><strong>" + escapeHtml(item.symbol) + " fundamentals</strong><span class='pill " + postureClass + "'>" + escapeHtml(item.posture) + " · " + item.score + "/100</span></div>" +
+            "<p><span class='pill'>price $" + Number(item.priceUsd || 0).toLocaleString() + "</span> <span class='pill'>24h " + Number(item.change24hPct || 0).toFixed(2) + "%</span> <span class='pill'>vol/mcap " + (Number(item.volumeToMarketCap || 0) * 100).toFixed(2) + "%</span></p>" +
+            "<p>Market cap $" + Number(item.marketCapUsd || 0).toLocaleString() + " · 24h volume $" + Number(item.volume24hUsd || 0).toLocaleString() + "</p>" +
+            (notes.length ? "<ul>" + notes.slice(0, 4).map((note) => "<li>" + escapeHtml(note) + "</li>").join("") + "</ul>" : "") +
+          "</article>";
+        }).join("");
+    }
+
     function renderAccountStatus(status) {
       if (!status.available) {
         accountEl.innerHTML =
@@ -2080,6 +2116,16 @@ function renderApp(): string {
         return;
       }
       renderMarketContext(body);
+    }
+
+    async function loadFundamentals() {
+      const res = await fetch("/api/fundamentals");
+      const body = await res.json();
+      if (!res.ok) {
+        fundamentalsEl.innerHTML = "<div class='empty'>Fundamentals failed: " + escapeHtml(body.message) + "</div>";
+        return;
+      }
+      renderFundamentals(body);
     }
 
     async function loadAccountStatus() {
@@ -2289,6 +2335,13 @@ function renderApp(): string {
       });
     });
 
+    refreshFundamentalsButton.addEventListener("click", () => {
+      fundamentalsEl.innerHTML = "<div class='empty'>Refreshing BTC/ETH/SOL fundamentals...</div>";
+      loadFundamentals().catch((err) => {
+        fundamentalsEl.innerHTML = "<div class='empty'>Fundamentals failed: " + escapeHtml(String(err)) + "</div>";
+      });
+    });
+
     refreshSetupBoardButton.addEventListener("click", () => {
       setupBoardEl.innerHTML = "<div class='empty'>Scoring setup board from live candles, backtests, context, and style history...</div>";
       loadSetupBoard().catch((err) => {
@@ -2333,6 +2386,9 @@ function renderApp(): string {
     });
     loadMarketContext().catch((err) => {
       contextEl.innerHTML = "<div class='empty'>Market context failed: " + escapeHtml(String(err)) + "</div>";
+    });
+    loadFundamentals().catch((err) => {
+      fundamentalsEl.innerHTML = "<div class='empty'>Fundamentals failed: " + escapeHtml(String(err)) + "</div>";
     });
     loadSetupBoard().catch((err) => {
       setupBoardEl.innerHTML = "<div class='empty'>Setup board failed: " + escapeHtml(String(err)) + "</div>";

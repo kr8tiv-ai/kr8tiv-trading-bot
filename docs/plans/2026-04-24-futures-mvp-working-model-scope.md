@@ -93,6 +93,12 @@ The Futures Context panel should make the market backdrop readable before Matt c
 - a crowding assessment (`longs_crowded`, `shorts_crowded`, or `balanced`)
 - a plain-English caution such as "avoid late long chases" when funding + basis look crowded
 
+The Fundamentals Pulse should be a lightweight confirmation/veto layer:
+- pull BTC/ETH/SOL market cap, 24h volume, 24h change, and last update age from a public fundamentals source
+- score whether broad liquidity and price-extension conditions are `supportive`, `caution`, or `hostile`
+- never override the futures setup model by itself; it confirms or warns against taking the setup
+- explain the score in plain language so Matt can see when a move is too stale, too illiquid, or overextended
+
 The Setup Board should be the cockpit's fast decision layer:
 - one row per `BTCUSDT`, `ETHUSDT`, `SOLUSDT`
 - combines deterministic model setup, recent backtest winner, futures context, grid planner readiness, and style conflicts
@@ -129,6 +135,7 @@ The local app and CLI should support this loop:
 9. Backtest Lab ranks the active strategy family before Matt risks capital.
 10. Past-trade analysis shows symbol + direction leaks so the app can say, "this is the kind of trade you usually mishandle."
 11. Strategy memory stores each Backtest Lab run and keeps a ranked view of breakout vs adaptive-grid effectiveness by symbol.
+12. Fundamentals Pulse adds a macro/liquidity warning layer before the setup is treated as actionable.
 
 ## Current Commands
 
@@ -148,6 +155,7 @@ When in doubt, prioritize:
 - futures signal quality
 - strategy effectiveness evidence from backtests
 - MEXC futures market context: funding, fair/index basis, 24h volume, open interest
+- lightweight fundamentals context: liquidity, market cap, 24h extension, stale-data warnings
 - accountability UX
 - journal/styling data capture
 - BTC/ETH/SOL leverage risk controls
