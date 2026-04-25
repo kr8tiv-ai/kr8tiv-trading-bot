@@ -3,6 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
   "dependencies": {
     "@kr8tiv/accountability": "workspace:*",
     "@kr8tiv/config": "workspace:*",
@@ -22,6 +26,7 @@
   },
   "devDependencies": {
     "@types/node": "^22",
-    "typescript": "^5.7"
+    "typescript": "^5.7",
+    "vitest": "^2.1"
   }
 }

@@ -44,10 +44,92 @@ function round(value: number, decimals: number = 8): number {
   return Math.round(value * factor) / factor;
 }
 
+function openLotFromTrade(
+  trade: ImportedTrade,
+  size: number,
+  fee: number,
+): OpenLot {
+  return {
+    tradeId: trade.sourceTradeId,
+    price: trade.price,
+    remainingSize: size,
+    fee,
+    originalSize: size,
+    executedAtMs: trade.executedAtMs,
+  };
+}
+
+function closeLots(
+  lots: OpenLot[],
+  closeTrade: ImportedTrade,
+  remainingCloseSize: number,
+  direction: "long" | "short",
+): { remainingCloseSize: number; closed?: ReconstructedTrade } {
+  let remaining = remainingCloseSize;
+  let entryNotional = 0;
+  let exitNotional = 0;
+  let entryFees = 0;
+  let exitFees = 0;
+  let matchedSize = 0;
+  let earliestEntryTime = Number.POSITIVE_INFINITY;
+  const entryTradeIds: string[] = [];
+
+  while (remaining > 0 && lots.length > 0) {
+    const lot = lots[0]!;
+    const matched = Math.min(remaining, lot.remainingSize);
+
+    matchedSize += matched;
+    entryNotional += matched * lot.price;
+    exitNotional += matched * closeTrade.price;
+    entryFees += lot.fee * (matched / lot.originalSize);
+    exitFees += closeTrade.fee * (matched / closeTrade.size);
+    earliestEntryTime = Math.min(earliestEntryTime, lot.executedAtMs);
+    if (!entryTradeIds.includes(lot.tradeId)) {
+      entryTradeIds.push(lot.tradeId);
+    }
+
+    lot.remainingSize -= matched;
+    remaining -= matched;
+
+    if (lot.remainingSize <= 0) {
+      lots.shift();
+    }
+  }
+
+  if (matchedSize <= 0) {
+    return { remainingCloseSize: remaining };
+  }
+
+  const grossPnlQuote =
+    direction === "long"
+      ? exitNotional - entryNotional
+      : entryNotional - exitNotional;
+
+  return {
+    remainingCloseSize: remaining,
+    closed: ReconstructedTradeSchema.parse({
+      symbol: closeTrade.symbol,
+      market: closeTrade.market,
+      direction,
+      entryTimeMs: earliestEntryTime,
+      exitTimeMs: closeTrade.executedAtMs,
+      holdTimeMs: closeTrade.executedAtMs - earliestEntryTime,
+      entryPrice: round(entryNotional / matchedSize),
+      exitPrice: round(exitNotional / matchedSize),
+      size: round(matchedSize),
+      grossPnlQuote: round(grossPnlQuote),
+      feesQuote: round(entryFees + exitFees),
+      netPnlQuote: round(grossPnlQuote - (entryFees + exitFees)),
+      entryTradeIds,
+      exitTradeIds: [closeTrade.sourceTradeId],
+    }),
+  };
+}
+
 /**
- * Reconstruct closed long trades from imported spot trade rows via FIFO lot
- * matching. Unmatched open inventory is intentionally ignored until a future
- * close arrives.
+ * Reconstruct closed futures/spot round trips from imported trade rows via FIFO
+ * lot matching. Buy→sell closes longs; sell→buy closes shorts. Unmatched open
+ * inventory is intentionally ignored until a future close arrives.
  */
 export function reconstructTrades(trades: ImportedTrade[]): ReconstructedTrade[] {
   const parsed = ImportedTradeSchema.array().parse(trades);
@@ -57,75 +139,37 @@ export function reconstructTrades(trades: ImportedTrade[]): ReconstructedTrade[]
       a.sourceTradeId.localeCompare(b.sourceTradeId),
   );
 
-  const openLots: OpenLot[] = [];
+  const longLots: OpenLot[] = [];
+  const shortLots: OpenLot[] = [];
   const reconstructed: ReconstructedTrade[] = [];
 
   for (const trade of ordered) {
     if (trade.side === "buy") {
-      openLots.push({
-        tradeId: trade.sourceTradeId,
-        price: trade.price,
-        remainingSize: trade.size,
-        fee: trade.fee,
-        originalSize: trade.size,
-        executedAtMs: trade.executedAtMs,
-      });
+      const result = closeLots(shortLots, trade, trade.size, "short");
+      if (result.closed) reconstructed.push(result.closed);
+      if (result.remainingCloseSize > 0) {
+        longLots.push(
+          openLotFromTrade(
+            trade,
+            result.remainingCloseSize,
+            trade.fee * (result.remainingCloseSize / trade.size),
+          ),
+        );
+      }
       continue;
     }
 
-    let remainingSell = trade.size;
-    let entryNotional = 0;
-    let exitNotional = 0;
-    let entryFees = 0;
-    let exitFees = 0;
-    let matchedSize = 0;
-    let earliestEntryTime = Number.POSITIVE_INFINITY;
-    const entryTradeIds: string[] = [];
-
-    while (remainingSell > 0 && openLots.length > 0) {
-      const lot = openLots[0]!;
-      const matched = Math.min(remainingSell, lot.remainingSize);
-
-      matchedSize += matched;
-      entryNotional += matched * lot.price;
-      exitNotional += matched * trade.price;
-      entryFees += lot.fee * (matched / lot.originalSize);
-      exitFees += trade.fee * (matched / trade.size);
-      earliestEntryTime = Math.min(earliestEntryTime, lot.executedAtMs);
-      if (!entryTradeIds.includes(lot.tradeId)) {
-        entryTradeIds.push(lot.tradeId);
-      }
-
-      lot.remainingSize -= matched;
-      remainingSell -= matched;
-
-      if (lot.remainingSize <= 0) {
-        openLots.shift();
-      }
-    }
-
-    if (matchedSize <= 0) continue;
-
-    reconstructed.push(
-      ReconstructedTradeSchema.parse({
-        symbol: trade.symbol,
-        market: trade.market,
-        direction: "long",
-        entryTimeMs: earliestEntryTime,
-        exitTimeMs: trade.executedAtMs,
-        holdTimeMs: trade.executedAtMs - earliestEntryTime,
-        entryPrice: round(entryNotional / matchedSize),
-        exitPrice: round(exitNotional / matchedSize),
-        size: round(matchedSize),
-        grossPnlQuote: round(exitNotional - entryNotional),
-        feesQuote: round(entryFees + exitFees),
-        netPnlQuote: round(
-          exitNotional - entryNotional - (entryFees + exitFees),
+    const result = closeLots(longLots, trade, trade.size, "long");
+    if (result.closed) reconstructed.push(result.closed);
+    if (result.remainingCloseSize > 0) {
+      shortLots.push(
+        openLotFromTrade(
+          trade,
+          result.remainingCloseSize,
+          trade.fee * (result.remainingCloseSize / trade.size),
         ),
-        entryTradeIds,
-        exitTradeIds: [trade.sourceTradeId],
-      }),
-    );
+      );
+    }
   }
 
   return reconstructed;

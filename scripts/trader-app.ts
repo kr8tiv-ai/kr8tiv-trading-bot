@@ -34,6 +34,7 @@ import {
   startTelegramDispatcher,
   type TelegramDispatcher,
 } from "./trader-app-telegram.js";
+import { buildPastTradeAnalysis } from "./trade-history-analysis.js";
 
 const HOST = process.env.TRADER_APP_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.TRADER_APP_PORT ?? 3020);
@@ -323,6 +324,14 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       entries,
       telegramEnabled: dispatcher !== null,
     });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/history-analysis") {
+    const analysis = withDb((db) =>
+      buildPastTradeAnalysis(readImportedTradesForSymbols(db, SUPPORTED_SYMBOLS)),
+    );
+    json(res, 200, analysis);
     return;
   }
 
@@ -781,8 +790,13 @@ function renderApp(): string {
       </div>
 
       <aside class="plate card">
+        <h2>Past-trade analysis</h2>
+        <div id="history-analysis" class="journal"><div class="empty">Loading imported MEXC futures history...</div></div>
+
+        <div class="model-panel">
         <h2>Recent journal</h2>
         <div id="journal" class="journal"><div class="empty">Loading journal...</div></div>
+        </div>
       </aside>
     </section>
   </main>
@@ -791,6 +805,7 @@ function renderApp(): string {
     const form = document.querySelector("#trade-form");
     const verdictEl = document.querySelector("#verdict");
     const journalEl = document.querySelector("#journal");
+    const historyEl = document.querySelector("#history-analysis");
     const modelEl = document.querySelector("#model-output");
     const scanModelButton = document.querySelector("#scan-model");
     const autoPollToggle = document.querySelector("#auto-poll");
@@ -918,6 +933,42 @@ function renderApp(): string {
       }).join("");
     }
 
+    function pct(value) {
+      return (Number(value || 0) * 100).toFixed(0) + "%";
+    }
+
+    function money(value) {
+      const n = Number(value || 0);
+      return (n >= 0 ? "+" : "") + n.toFixed(2) + " USDT";
+    }
+
+    function renderHistoryAnalysis(analysis) {
+      const totals = analysis.totals;
+      if (!totals.importedTrades) {
+        historyEl.innerHTML =
+          "<div class='empty'>No imported futures fills yet. Run <code>pnpm history:ingest --symbols 'BTCUSDT,ETHUSDT,SOLUSDT' --days 90</code>, then this panel becomes your personal trading mirror.</div>";
+        return;
+      }
+      historyEl.innerHTML =
+        "<article class='entry'>" +
+          "<div class='entry-head'><strong>All MEXC futures history</strong><span class='pill " + (totals.netPnlQuote >= 0 ? "ok" : "block") + "'>" + money(totals.netPnlQuote) + "</span></div>" +
+          "<div class='metric-row'>" +
+            "<div class='metric'><small>Imported fills</small><b>" + totals.importedTrades + "</b></div>" +
+            "<div class='metric'><small>Closed trades</small><b>" + totals.closedTrades + "</b></div>" +
+            "<div class='metric'><small>Win rate</small><b>" + pct(totals.winRate) + "</b></div>" +
+          "</div>" +
+          "<p>Profit factor " + Number(totals.profitFactor || 0).toFixed(2) + " | fees " + Number(totals.feesQuote || 0).toFixed(2) + " USDT | avg closed trade " + money(totals.avgNetPnlQuote) + "</p>" +
+        "</article>" +
+        analysis.symbols.map((row) =>
+          "<article class='entry'>" +
+            "<div class='entry-head'><strong>" + escapeHtml(row.symbol) + "</strong><span class='pill " + (row.netPnlQuote >= 0 ? "ok" : "block") + "'>" + money(row.netPnlQuote) + "</span></div>" +
+            "<span class='pill'>" + row.closedTrades + " closed</span> <span class='pill'>" + pct(row.winRate) + " win</span> <span class='pill'>PF " + Number(row.profitFactor || 0).toFixed(2) + "</span>" +
+            "<p>Long: " + row.long.closedTrades + " trades / " + money(row.long.netPnlQuote) + " / " + pct(row.long.winRate) + " win</p>" +
+            "<p>Short: " + row.short.closedTrades + " trades / " + money(row.short.netPnlQuote) + " / " + pct(row.short.winRate) + " win</p>" +
+          "</article>"
+        ).join("");
+    }
+
     function renderModel(data) {
       const ts = data.generatedAtMs
         ? new Date(data.generatedAtMs).toLocaleTimeString()
@@ -965,6 +1016,12 @@ function renderApp(): string {
       telegramStatusEl.className = "telegram-pill " + (telegramEnabled ? "" : "off");
       telegramStatusEl.textContent = telegramEnabled ? "telegram on" : "telegram off";
       renderJournal(body.entries ?? []);
+    }
+
+    async function loadHistoryAnalysis() {
+      const res = await fetch("/api/history-analysis");
+      const body = await res.json();
+      renderHistoryAnalysis(body);
     }
 
     async function runModelScan(reason) {
@@ -1051,6 +1108,10 @@ function renderApp(): string {
 
     loadJournal().catch((err) => {
       journalEl.innerHTML = "<div class='empty'>Journal load failed: " + String(err) + "</div>";
+    });
+
+    loadHistoryAnalysis().catch((err) => {
+      historyEl.innerHTML = "<div class='empty'>History analysis failed: " + escapeHtml(String(err)) + "</div>";
     });
 
     // Kick off the auto-poll loop immediately — this is the product: live signals streamed into the cockpit.

@@ -103,6 +103,45 @@ describe("reconstructTrades", () => {
     expect(reconstructed[0]?.netPnlQuote).toBe(4.9);
   });
 
+  it("reconstructs a simple futures short from sell-then-buy fills", () => {
+    const reconstructed = reconstructTrades([
+      trade({
+        market: "mexc-futures",
+        sourceTradeId: "s1",
+        side: "sell",
+        price: 90000,
+        size: 0.01,
+        quoteNotional: 900,
+        fee: 0.36,
+        executedAtMs: Date.UTC(2026, 3, 20, 12, 0, 0),
+      }),
+      trade({
+        market: "mexc-futures",
+        sourceTradeId: "b1",
+        side: "buy",
+        price: 89000,
+        size: 0.01,
+        quoteNotional: 890,
+        fee: 0.36,
+        executedAtMs: Date.UTC(2026, 3, 20, 12, 20, 0),
+      }),
+    ]);
+
+    expect(reconstructed).toHaveLength(1);
+    expect(reconstructed[0]).toMatchObject({
+      symbol: "ETHUSDT",
+      market: "mexc-futures",
+      direction: "short",
+      entryPrice: 90000,
+      exitPrice: 89000,
+      size: 0.01,
+      grossPnlQuote: 10,
+      feesQuote: 0.72,
+      netPnlQuote: 9.28,
+      holdTimeMs: 1_200_000,
+    });
+  });
+
   it("ignores unmatched open inventory until a close arrives", () => {
     const reconstructed = reconstructTrades([
       trade({
