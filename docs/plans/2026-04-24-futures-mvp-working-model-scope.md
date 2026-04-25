@@ -69,6 +69,7 @@ The Backtest Lab should replay the same candles the signal engine uses and rank 
 - net PnL %, win rate, profit factor, max drawdown, and trade count
 - whether grid or breakout is currently a better fit
 - warnings when there is not enough data or the market is too compressed/wide for a clean grid
+- a saved strategy-effectiveness memory so repeated backtests show which family has been working lately instead of only showing a one-off replay
 
 The Grid Planner is separate from live execution. It should:
 - build BTC/ETH/SOL futures grid levels from the same MEXC candles used by Backtest Lab
@@ -120,6 +121,7 @@ The local app and CLI should support this loop:
 7. Future style analysis learns from both executed trades and rejected/blocked plans.
 8. Backtest Lab ranks the active strategy family before Matt risks capital.
 9. Past-trade analysis shows symbol + direction leaks so the app can say, "this is the kind of trade you usually mishandle."
+10. Strategy memory stores each Backtest Lab run and keeps a ranked view of breakout vs adaptive-grid effectiveness by symbol.
 
 ## Current Commands
 

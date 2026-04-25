@@ -42,8 +42,10 @@ import {
   type TelegramDispatcher,
 } from "./trader-app-telegram.js";
 import {
+  listStrategyEffectiveness,
   listRecentTradeFeedback,
   readTraderSettings,
+  recordBacktestComparison,
   recordTradeFeedback,
   saveTraderSettings,
   type TradeFeedbackAction,
@@ -95,6 +97,11 @@ type ApiBacktestResponse = {
     currentPrice: number;
     comparison: ReturnType<typeof compareBacktestStrategies>;
   }>;
+};
+
+type ApiStrategyEffectivenessResponse = {
+  generatedAtMs: number;
+  rows: ReturnType<typeof listStrategyEffectiveness>;
 };
 
 type ApiGridPlanResponse = {
@@ -356,6 +363,7 @@ async function handleBacktest(url: URL): Promise<ApiBacktestResponse> {
       ? requestedLimit
       : 320;
   const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
+  const generatedAtMs = Date.now();
   const results = await Promise.all(
     SUPPORTED_SYMBOLS.map(async (symbol) => {
       const candles = await client.fetchCandles({
@@ -375,12 +383,31 @@ async function handleBacktest(url: URL): Promise<ApiBacktestResponse> {
       };
     }),
   );
+  withDb((db) => {
+    for (const row of results) {
+      recordBacktestComparison(db, {
+        generatedAtMs,
+        interval: "Min15",
+        limit,
+        symbol: row.symbol,
+        currentPrice: row.currentPrice,
+        comparison: row.comparison,
+      });
+    }
+  });
 
   return {
-    generatedAtMs: Date.now(),
+    generatedAtMs,
     interval: "Min15",
     limit,
     results,
+  };
+}
+
+function handleStrategyEffectiveness(): ApiStrategyEffectivenessResponse {
+  return {
+    generatedAtMs: Date.now(),
+    rows: withDb((db) => listStrategyEffectiveness(db)),
   };
 }
 
@@ -629,6 +656,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     } catch (err) {
       json(res, 500, {
         error: "backtest_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/strategy-effectiveness") {
+    try {
+      json(res, 200, handleStrategyEffectiveness());
+    } catch (err) {
+      json(res, 500, {
+        error: "strategy_effectiveness_failed",
         message: err instanceof Error ? err.message : String(err),
       });
     }
@@ -1097,6 +1136,7 @@ function renderApp(): string {
         <div class="scan-controls">
           <button id="scan-model" type="button">Scan live BTC/ETH/SOL model</button>
           <button id="run-backtest" type="button" class="secondary">Compare breakout vs grid edges</button>
+          <button id="refresh-effectiveness" type="button" class="secondary">Refresh strategy memory</button>
           <button id="build-grid" type="button" class="secondary">Build futures grid plan</button>
           <button id="refresh-context" type="button" class="secondary">Refresh funding + basis context</button>
           <button id="refresh-setup-board" type="button" class="secondary">Score setup board</button>
@@ -1224,6 +1264,10 @@ function renderApp(): string {
           <div id="backtest-output" class="journal"><div class="empty">Run the backtest to compare breakout + trailing-stop vs adaptive futures grid on recent MEXC candles.</div></div>
         </div>
         <div class="model-panel">
+          <h3>Strategy effectiveness memory</h3>
+          <div id="strategy-effectiveness-output" class="journal"><div class="empty">Run Backtest Lab to begin ranking which strategy is actually working by symbol.</div></div>
+        </div>
+        <div class="model-panel">
           <h3>Grid planner</h3>
           <div id="grid-output" class="journal"><div class="empty">Build a medium-risk futures grid plan for BTC, ETH, and SOL using your saved capital rules. Planner only; no live grid orders fire.</div></div>
         </div>
@@ -1270,11 +1314,13 @@ function renderApp(): string {
     const modelEl = document.querySelector("#model-output");
     const setupBoardEl = document.querySelector("#setup-board-output");
     const backtestEl = document.querySelector("#backtest-output");
+    const effectivenessEl = document.querySelector("#strategy-effectiveness-output");
     const gridEl = document.querySelector("#grid-output");
     const contextEl = document.querySelector("#context-output");
     const feedbackEl = document.querySelector("#feedback-log");
     const scanModelButton = document.querySelector("#scan-model");
     const runBacktestButton = document.querySelector("#run-backtest");
+    const refreshEffectivenessButton = document.querySelector("#refresh-effectiveness");
     const buildGridButton = document.querySelector("#build-grid");
     const refreshContextButton = document.querySelector("#refresh-context");
     const refreshSetupBoardButton = document.querySelector("#refresh-setup-board");
@@ -1626,6 +1672,37 @@ function renderApp(): string {
         }).join("");
     }
 
+    function renderStrategyEffectiveness(data) {
+      const stamp = data.generatedAtMs ? new Date(data.generatedAtMs).toLocaleTimeString() : "";
+      const rows = data.rows ?? [];
+      if (!rows.length) {
+        effectivenessEl.innerHTML =
+          "<div class='empty'>No saved backtest snapshots yet. Run Backtest Lab once to start the strategy memory.</div>";
+        return;
+      }
+      effectivenessEl.innerHTML =
+        "<div class='model-meta'><span>strategy memory " + escapeHtml(stamp) + " · saved Backtest Lab snapshots</span></div>" +
+        rows.map((row) => {
+          const bestClass = row.bestStrategy ? "ok" : "block";
+          const strategies = (row.strategies ?? []).map((item) =>
+            "<div class='strategy-row'>" +
+              "<span class='pill'>" + escapeHtml(item.strategy) + "</span>" +
+              "<span class='pill " + (item.latestNetPnlPct >= 0 ? "ok" : "block") + "'>latest " + (item.latestNetPnlPct >= 0 ? "+" : "") + Number(item.latestNetPnlPct || 0).toFixed(2) + "%</span>" +
+              "<span class='pill'>avg " + (item.avgNetPnlPct >= 0 ? "+" : "") + Number(item.avgNetPnlPct || 0).toFixed(2) + "%</span>" +
+              "<span class='pill'>" + item.latestTradeCount + " trades</span>" +
+              "<span class='pill'>PF " + Number(item.latestProfitFactor || 0).toFixed(2) + "</span>" +
+              "<span class='pill'>score " + Number(item.score || 0).toFixed(2) + "</span>" +
+              "<span class='pill'>" + item.samples + " samples</span>" +
+            "</div>"
+          ).join("");
+          return "<article class='entry'>" +
+            "<div class='entry-head'><strong>" + escapeHtml(row.symbol) + " strategy memory</strong><span class='pill " + bestClass + "'>" + escapeHtml(row.bestStrategy || "no edge") + "</span></div>" +
+            "<p>" + escapeHtml(row.latestRecommendation || "Run Backtest Lab for evidence.") + " | current " + Number(row.latestCurrentPrice || 0).toFixed(row.symbol === "SOLUSDT" ? 4 : 2) + " | snapshots " + row.snapshotCount + "</p>" +
+            strategies +
+          "</article>";
+        }).join("");
+    }
+
     function renderGridPlan(data) {
       const stamp = data.generatedAtMs ? new Date(data.generatedAtMs).toLocaleTimeString() : "";
       gridEl.innerHTML =
@@ -1796,6 +1873,16 @@ function renderApp(): string {
       renderAccountStatus(body);
     }
 
+    async function loadStrategyEffectiveness() {
+      const res = await fetch("/api/strategy-effectiveness");
+      const body = await res.json();
+      if (!res.ok) {
+        effectivenessEl.innerHTML = "<div class='empty'>Strategy memory failed: " + escapeHtml(body.message) + "</div>";
+        return;
+      }
+      renderStrategyEffectiveness(body);
+    }
+
     async function loadSetupBoard() {
       const payload = formPayload();
       const margin = encodeURIComponent(payload.marginQuote || 25);
@@ -1921,9 +2008,19 @@ function renderApp(): string {
           return;
         }
         renderBacktest(body);
+        loadStrategyEffectiveness().catch((err) => {
+          effectivenessEl.innerHTML = "<div class='empty'>Strategy memory failed: " + escapeHtml(String(err)) + "</div>";
+        });
       } catch (err) {
         backtestEl.innerHTML = "<div class='empty'>Backtest failed: " + escapeHtml(String(err)) + "</div>";
       }
+    });
+
+    refreshEffectivenessButton.addEventListener("click", () => {
+      effectivenessEl.innerHTML = "<div class='empty'>Refreshing saved strategy-effectiveness memory...</div>";
+      loadStrategyEffectiveness().catch((err) => {
+        effectivenessEl.innerHTML = "<div class='empty'>Strategy memory failed: " + escapeHtml(String(err)) + "</div>";
+      });
     });
 
     buildGridButton.addEventListener("click", async () => {
@@ -1974,6 +2071,9 @@ function renderApp(): string {
     });
     loadAccountStatus().catch((err) => {
       accountEl.innerHTML = "<div class='empty'>Account status failed: " + escapeHtml(String(err)) + "</div>";
+    });
+    loadStrategyEffectiveness().catch((err) => {
+      effectivenessEl.innerHTML = "<div class='empty'>Strategy memory failed: " + escapeHtml(String(err)) + "</div>";
     });
 
     loadHistoryAnalysis().catch((err) => {
