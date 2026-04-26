@@ -3,15 +3,22 @@ import { reviewTradePlan } from "@kr8tiv/accountability";
 import { type BetterSqliteDatabase, closeDatabase, openDatabase } from "@kr8tiv/db";
 import {
   applySchema,
+  closePaperOrderManual,
   findTradeJournalEntry,
+  insertPaperOrder,
+  listOpenPaperOrders,
+  listRecentPaperOrders,
   listRecentTradeJournalEntries,
+  type PaperOrder,
   recordApprovalDecision,
   recordTelegramDispatch,
   saveTradeJournalEntry,
   type TradeJournalEntry,
+  tickPaperOrders,
 } from "@kr8tiv/executor";
 import { createLogger } from "@kr8tiv/logger";
 import { MEXCFuturesClient } from "@kr8tiv/mexc-futures";
+import { createRedis, type Redis } from "@kr8tiv/redis-client";
 import { WindowsCredentialManagerProvider } from "@kr8tiv/secrets";
 import {
   type AccountabilityCheck,
@@ -40,6 +47,10 @@ import {
 import { type AssetFundamentalAssessment, fetchAssetFundamentals } from "./fundamentals.js";
 import { readFuturesAccountStatus } from "./futures-account-status.js";
 import { ingestFuturesHistory } from "./history-ingest.js";
+import { type LeaderLease, startLeaderLease } from "./leader-lease.js";
+import { findTopLeak, type LeakObservation } from "./leak-detector.js";
+import { getMlInferenceStatus, type MlInferenceStatus, modelAgeDays } from "./ml-inference.js";
+import { type SuggestedSize, suggestPositionSize } from "./position-sizer.js";
 import { publicOnlyProvider, scanSymbols } from "./scan-signals.js";
 import { buildPastTradeAnalysis } from "./trade-history-analysis.js";
 import {
@@ -60,6 +71,17 @@ const SUPPORTED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"] as const;
 
 const log = createLogger().child({ service: "trader-app" });
 let dispatcher: TelegramDispatcher | null = null;
+
+// Leader lease + Redis handle for the multi-instance pattern (#10). When
+// `leaderLease.status().isLeader === false`, mutating endpoints reject with
+// 503 and the cockpit shows a "follower" pill so Matt knows another instance
+// owns the lease (typically the Hostinger VPS while the laptop sleeps).
+let leaderLease: LeaderLease | null = null;
+let leaderRedis: Redis | null = null;
+
+// Live-firing gate (#1). Defaults OFF so approving a plan creates a paper
+// order. Flip to "true" + provision futures creds to fire on MEXC.
+const LIVE_FUTURES_FIRING = (process.env.LIVE_FUTURES_FIRING ?? "").toLowerCase() === "true";
 
 type ApiReviewResponse = {
   plan: AccountableTradePlan;
@@ -332,6 +354,18 @@ async function handleModelScan(url: URL): Promise<ApiModelScanResponse> {
       conflicts: conflictsForPlan(plan, fingerprints.get(plan.symbol), generatedAtMs),
     })),
   );
+  // Tick paper orders against the freshly-pulled mark prices so any open
+  // paper order whose stop / target was crossed gets settled before the
+  // cockpit re-renders the panel. Cheap (~ms) on a small open set.
+  withDb((db) => {
+    const priceBySymbol: Partial<Record<"BTCUSDT" | "ETHUSDT" | "SOLUSDT", number>> = {};
+    for (const scan of scans) {
+      if (scan.symbol === "BTCUSDT" || scan.symbol === "ETHUSDT" || scan.symbol === "SOLUSDT") {
+        priceBySymbol[scan.symbol] = scan.currentPrice;
+      }
+    }
+    tickPaperOrders(db, { priceBySymbol, nowMs: generatedAtMs });
+  });
   return { scans, plans, generatedAtMs };
 }
 
@@ -582,6 +616,338 @@ function countPendingApprovals(entries: TradeJournalEntry[]): number {
   return entries.filter((entry) => entry.approvalStatus === "pending").length;
 }
 
+// ----------------------------------------------------------------------
+// Position sizer (#4). POST /api/sizer body:
+//   { plan: { direction, entryPrice, stopLossPrice, riskMode },
+//     riskOfAccountPct?: 0.005,
+//     bankrollUsdt?: 100 }    // overrides the live MEXC balance read
+// ----------------------------------------------------------------------
+type ApiSizerResponse = {
+  freeUsdt: number;
+  bankrollSource: "mexc-futures-account" | "manual-override" | "unavailable";
+  suggestion: SuggestedSize;
+};
+
+async function handleSizer(body: unknown): Promise<ApiSizerResponse> {
+  const payload =
+    typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  const plan = payload.plan as SuggestedSize extends infer _ ? unknown : never;
+  if (typeof plan !== "object" || plan === null) {
+    throw new Error("plan { direction, entryPrice, stopLossPrice, riskMode } is required");
+  }
+  const planObj = plan as {
+    direction: "long" | "short";
+    entryPrice: number;
+    stopLossPrice: number;
+    riskMode: "sniper" | "medium" | "core";
+  };
+
+  let freeUsdt = 0;
+  let bankrollSource: ApiSizerResponse["bankrollSource"] = "unavailable";
+  if (
+    typeof payload.bankrollUsdt === "number" &&
+    Number.isFinite(payload.bankrollUsdt) &&
+    payload.bankrollUsdt > 0
+  ) {
+    freeUsdt = payload.bankrollUsdt;
+    bankrollSource = "manual-override";
+  } else {
+    try {
+      const status = await readFuturesAccountStatus();
+      if (status.available) {
+        freeUsdt = status.snapshot.usdt.free;
+        bankrollSource = "mexc-futures-account";
+      }
+    } catch {
+      bankrollSource = "unavailable";
+    }
+  }
+
+  const riskOfAccountPct =
+    typeof payload.riskOfAccountPct === "number" &&
+    Number.isFinite(payload.riskOfAccountPct) &&
+    payload.riskOfAccountPct > 0 &&
+    payload.riskOfAccountPct <= 0.5
+      ? payload.riskOfAccountPct
+      : 0.005;
+
+  const suggestion = suggestPositionSize({
+    freeUsdt,
+    riskOfAccountPct,
+    plan: planObj,
+  });
+  return { freeUsdt, bankrollSource, suggestion };
+}
+
+// ----------------------------------------------------------------------
+// Leak-of-the-day (#3). GET /api/leak — returns one observation or null.
+// ----------------------------------------------------------------------
+type ApiLeakResponse = {
+  generatedAtMs: number;
+  leak: LeakObservation | null;
+  importedTrades: number;
+  journalRows: number;
+};
+
+function handleLeak(): ApiLeakResponse {
+  return withDb((db) => {
+    const trades = readImportedTradesForSymbols(db, SUPPORTED_SYMBOLS);
+    const journal = listRecentTradeJournalEntries(db, 100);
+    const leak = findTopLeak({ trades, journal });
+    return {
+      generatedAtMs: Date.now(),
+      leak,
+      importedTrades: trades.length,
+      journalRows: journal.length,
+    };
+  });
+}
+
+// ----------------------------------------------------------------------
+// Paper orders (#1). GET /api/paper-orders, POST /api/fire, POST /api/paper-orders/close.
+// ----------------------------------------------------------------------
+type ApiPaperOrdersResponse = {
+  liveFiringEnabled: boolean;
+  open: PaperOrder[];
+  recent: PaperOrder[];
+  realizedPnlQuote: number;
+};
+
+function handlePaperOrders(): ApiPaperOrdersResponse {
+  return withDb((db) => {
+    const open = listOpenPaperOrders(db);
+    const recent = listRecentPaperOrders(db, 30);
+    const realizedPnlQuote = recent
+      .filter((o) => o.status !== "open")
+      .reduce((sum, o) => sum + (o.realizedPnlQuote ?? 0), 0);
+    return {
+      liveFiringEnabled: LIVE_FUTURES_FIRING,
+      open,
+      recent,
+      realizedPnlQuote: Math.round(realizedPnlQuote * 1e6) / 1e6,
+    };
+  });
+}
+
+type ApiFireResponse = {
+  mode: "paper" | "live";
+  paperOrderId: number;
+  journalId: number;
+  liveOrderId: string | null;
+  notes: string;
+};
+
+async function handleFire(body: unknown): Promise<ApiFireResponse> {
+  const payload =
+    typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  const journalId = Number(payload.journalId);
+  if (!Number.isInteger(journalId) || journalId <= 0) {
+    throw new Error("journalId (positive integer) is required");
+  }
+
+  return await new Promise<ApiFireResponse>((resolve, reject) => {
+    const db = openDatabase();
+    try {
+      applySchema(db);
+      const entry = findTradeJournalEntry(db, journalId);
+      if (!entry) {
+        throw new Error(`trade_journal#${journalId} not found`);
+      }
+      if (!entry.okToProceed) {
+        throw new Error(`trade_journal#${journalId} was blocked by accountability — cannot fire`);
+      }
+
+      // Live-firing path (#1 Phase 6) — gated behind env. The actual MEXC
+      // futures createOrder wiring lands when Matt's ready; for now this
+      // throws so an accidentally-enabled gate never silently fails.
+      if (LIVE_FUTURES_FIRING && payload.paperOnly !== true) {
+        reject(
+          new Error(
+            "LIVE_FUTURES_FIRING=true but Phase 6 wire-up not yet shipped — set LIVE_FUTURES_FIRING=false (default) to paper-fire while the futures write path is finalized",
+          ),
+        );
+        return;
+      }
+
+      const paperOrderId = insertPaperOrder(db, {
+        journalId: entry.id,
+        symbol: entry.symbol as PaperOrder["symbol"],
+        direction: entry.direction,
+        leverage: entry.leverage,
+        marginQuote: entry.marginQuote,
+        entryPrice: entry.entryPrice,
+        stopLossPrice: entry.stopLossPrice,
+        takeProfitPrice: entry.takeProfitPrice,
+        isLive: false,
+        notes: `paper-fired from cockpit (TJ#${entry.id})`,
+      });
+      resolve({
+        mode: "paper",
+        paperOrderId,
+        journalId: entry.id,
+        liveOrderId: null,
+        notes:
+          "paper-fired into local ledger; no exchange action. Set LIVE_FUTURES_FIRING=true once Phase 6 (futures write path) ships.",
+      });
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    } finally {
+      closeDatabase(db);
+    }
+  });
+}
+
+type ApiClosePaperOrderResponse = {
+  closed: PaperOrder | null;
+  found: boolean;
+};
+
+async function handleClosePaperOrder(body: unknown): Promise<ApiClosePaperOrderResponse> {
+  const payload =
+    typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  const id = Number(payload.id);
+  const exitPrice = Number(payload.exitPrice);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error("id (positive integer) is required");
+  }
+  if (!Number.isFinite(exitPrice) || exitPrice <= 0) {
+    throw new Error("exitPrice (positive number) is required");
+  }
+  return withDb((db) => {
+    const closed = closePaperOrderManual(db, { id, exitPrice });
+    return { closed, found: closed !== null };
+  });
+}
+
+// ----------------------------------------------------------------------
+// ML inference status (#9). GET /api/ml/status — returns whether models are
+// loaded + the freshness of each. Not a prediction endpoint; the cockpit just
+// shows the status pill so Matt knows when to retrain.
+// ----------------------------------------------------------------------
+type ApiMlStatusResponse = {
+  status: MlInferenceStatus;
+  ageDaysBySymbol: Record<string, number | null>;
+};
+
+function handleMlStatus(): ApiMlStatusResponse {
+  const status = getMlInferenceStatus();
+  const ageDaysBySymbol: Record<string, number | null> = {};
+  for (const symbol of SUPPORTED_SYMBOLS) {
+    ageDaysBySymbol[symbol] = modelAgeDays(symbol);
+  }
+  return { status, ageDaysBySymbol };
+}
+
+// ----------------------------------------------------------------------
+// Candles + chart markers (#8). GET /api/candles?symbol=BTCUSDT&interval=Min15&limit=200
+// Returns a candle series + per-candle markers from journal + paper-orders so
+// lightweight-charts can paint your fills directly on the price.
+// ----------------------------------------------------------------------
+type ChartMarker = {
+  timeSec: number;
+  price: number;
+  position: "aboveBar" | "belowBar";
+  color: string;
+  label: string;
+  shape: "circle" | "arrowUp" | "arrowDown";
+};
+
+type ApiCandlesResponse = {
+  symbol: string;
+  interval: string;
+  candles: Array<{
+    timeSec: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }>;
+  markers: ChartMarker[];
+};
+
+async function handleCandles(url: URL): Promise<ApiCandlesResponse> {
+  const symbol = (url.searchParams.get("symbol") ?? "BTCUSDT").toUpperCase();
+  if (!SUPPORTED_SYMBOLS.includes(symbol as (typeof SUPPORTED_SYMBOLS)[number])) {
+    throw new Error(`unsupported symbol: ${symbol}`);
+  }
+  const intervalRaw = url.searchParams.get("interval") ?? "Min15";
+  const interval =
+    intervalRaw === "Min1" ||
+    intervalRaw === "Min5" ||
+    intervalRaw === "Min15" ||
+    intervalRaw === "Min30" ||
+    intervalRaw === "Hour1" ||
+    intervalRaw === "Hour4" ||
+    intervalRaw === "Day1"
+      ? intervalRaw
+      : "Min15";
+  const limit = Math.min(
+    500,
+    Math.max(60, Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200),
+  );
+
+  const client = await MEXCFuturesClient.create({ secrets: publicOnlyProvider });
+  const candles = await client.fetchCandles({ symbol, interval, limit });
+  const series = candles.map((c) => ({
+    timeSec: Math.floor(c.openTimeMs / 1000),
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }));
+
+  // Markers: journal rows + paper orders for this symbol within the candle
+  // window, plus paper-order exits when closed.
+  const earliest = series[0]?.timeSec ?? 0;
+  const journal = withDb((db) => listRecentTradeJournalEntries(db, 100));
+  const paperOrders = withDb((db) => listRecentPaperOrders(db, 100));
+  const markers: ChartMarker[] = [];
+  for (const entry of journal) {
+    if (entry.symbol !== symbol) continue;
+    const t = Math.floor(entry.createdAtMs / 1000);
+    if (t < earliest) continue;
+    markers.push({
+      timeSec: t,
+      price: entry.entryPrice,
+      position: entry.direction === "long" ? "belowBar" : "aboveBar",
+      color: entry.okToProceed ? "#94ff98" : "#ff6b6b",
+      label: `TJ#${entry.id}`,
+      shape: entry.direction === "long" ? "arrowUp" : "arrowDown",
+    });
+  }
+  for (const order of paperOrders) {
+    if (order.symbol !== symbol) continue;
+    const tIn = Math.floor(order.placedAtMs / 1000);
+    if (tIn >= earliest) {
+      markers.push({
+        timeSec: tIn,
+        price: order.entryPrice,
+        position: order.direction === "long" ? "belowBar" : "aboveBar",
+        color: order.isLive ? "#7ad7ff" : "#ffd36a",
+        label: `${order.isLive ? "LIVE" : "paper"}#${order.id}`,
+        shape: order.direction === "long" ? "arrowUp" : "arrowDown",
+      });
+    }
+    if (order.closedAtMs !== null && order.exitPrice !== null) {
+      const tOut = Math.floor(order.closedAtMs / 1000);
+      if (tOut >= earliest) {
+        markers.push({
+          timeSec: tOut,
+          price: order.exitPrice,
+          position: "aboveBar",
+          color: (order.realizedPnlQuote ?? 0) >= 0 ? "#94ff98" : "#ff6b6b",
+          label: `${order.status === "closed_target" ? "TGT" : order.status === "closed_stop" ? "STP" : "MAN"}#${order.id}`,
+          shape: "circle",
+        });
+      }
+    }
+  }
+  markers.sort((a, b) => a.timeSec - b.timeSec);
+  return { symbol, interval, candles: series, markers };
+}
+
 async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${HOST}:${PORT}`);
 
@@ -591,10 +957,14 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   }
 
   if (req.method === "GET" && url.pathname === "/api/health") {
+    const leader = leaderLease?.status() ?? null;
     json(res, 200, {
       ok: true,
       app: "kr8tiv-trader-cockpit",
       telegram: dispatcher !== null ? { chatId: dispatcher.chatId } : null,
+      leader,
+      liveFiringEnabled: LIVE_FUTURES_FIRING,
+      ml: getMlInferenceStatus(),
     });
     return;
   }
@@ -836,6 +1206,111 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return;
   }
 
+  // -- New endpoints (suggestion-list rollout: #4 sizer, #3 leak, #1 paper, #9 ml, #8 candles)
+
+  if (req.method === "POST" && url.pathname === "/api/sizer") {
+    try {
+      const payload = await readBody(req);
+      json(res, 200, await handleSizer(payload));
+    } catch (err) {
+      json(res, 400, {
+        error: "sizer_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/leak") {
+    try {
+      json(res, 200, handleLeak());
+    } catch (err) {
+      json(res, 500, {
+        error: "leak_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/paper-orders") {
+    try {
+      json(res, 200, handlePaperOrders());
+    } catch (err) {
+      json(res, 500, {
+        error: "paper_orders_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/fire") {
+    if (leaderLease !== null && !leaderLease.status().isLeader) {
+      json(res, 503, {
+        error: "follower_instance",
+        message:
+          "this cockpit instance is a follower; another instance holds the cockpit:leader lease in Redis",
+        leader: leaderLease.status(),
+      });
+      return;
+    }
+    try {
+      const payload = await readBody(req);
+      json(res, 200, await handleFire(payload));
+    } catch (err) {
+      json(res, 400, {
+        error: "fire_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/paper-orders/close") {
+    if (leaderLease !== null && !leaderLease.status().isLeader) {
+      json(res, 503, {
+        error: "follower_instance",
+        message: "this cockpit instance is a follower",
+      });
+      return;
+    }
+    try {
+      const payload = await readBody(req);
+      json(res, 200, await handleClosePaperOrder(payload));
+    } catch (err) {
+      json(res, 400, {
+        error: "close_paper_order_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ml/status") {
+    try {
+      json(res, 200, handleMlStatus());
+    } catch (err) {
+      json(res, 500, {
+        error: "ml_status_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/candles") {
+    try {
+      json(res, 200, await handleCandles(url));
+    } catch (err) {
+      json(res, 500, {
+        error: "candles_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
   notFound(res);
 }
 
@@ -887,6 +1362,65 @@ function renderApp(): string {
       width: min(1440px, calc(100vw - 32px));
       margin: 0 auto;
       padding: 32px 0 56px;
+    }
+    .cockpit-shell {
+      position: sticky;
+      top: 12px;
+      z-index: 20;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      margin-bottom: 18px;
+      padding: 14px 16px;
+      border: 1px solid rgba(244, 239, 227, 0.16);
+      border-radius: 24px;
+      background:
+        linear-gradient(135deg, rgba(11, 14, 10, 0.9), rgba(31, 38, 27, 0.74)),
+        radial-gradient(circle at 12% 50%, rgba(148, 255, 152, 0.12), transparent 18rem);
+      box-shadow: 0 18px 58px rgba(0, 0, 0, 0.44);
+      backdrop-filter: blur(22px);
+    }
+    .cockpit-brand {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      min-width: 0;
+    }
+    .orb {
+      width: 44px;
+      height: 44px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 30% 25%, #fff7cf, transparent 18%),
+        radial-gradient(circle at 52% 48%, var(--green), transparent 42%),
+        radial-gradient(circle at 65% 70%, var(--blue), transparent 48%),
+        #11180f;
+      box-shadow: 0 0 34px rgba(148, 255, 152, 0.28);
+    }
+    .cockpit-brand strong {
+      display: block;
+      font-size: 15px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    .cockpit-brand span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+    .cockpit-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .trade-firewall {
+      border-color: rgba(148, 255, 152, 0.32);
+      color: var(--green);
+      background: rgba(148, 255, 152, 0.08);
     }
     .hero {
       display: grid;
@@ -1150,6 +1684,16 @@ function renderApp(): string {
       border-radius: 20px;
       padding: 15px;
       background: linear-gradient(135deg, rgba(255,255,255,0.045), rgba(255,255,255,0.018));
+      position: relative;
+      overflow: hidden;
+    }
+    .entry::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: linear-gradient(to bottom, transparent, rgba(148, 255, 152, 0.55), transparent);
+      opacity: 0.55;
     }
     .entry-head {
       display: flex;
@@ -1224,10 +1768,108 @@ function renderApp(): string {
       .span-2, .span-4, .actions { grid-column: span 1; }
       h1 { font-size: 46px; }
     }
+    /* ----- New panels (suggestion-list rollout) ----- */
+    .leak-banner {
+      margin: 14px 0 18px;
+      padding: 14px 18px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 154, 203, 0.35);
+      background: rgba(255, 154, 203, 0.08);
+      color: var(--ink);
+      display: none;
+    }
+    .leak-banner.show { display: block; }
+    .leak-banner.severity-block { border-color: rgba(255, 107, 107, 0.5); background: rgba(255, 107, 107, 0.09); }
+    .leak-banner.severity-warn  { border-color: rgba(255, 211, 106, 0.5); background: rgba(255, 211, 106, 0.07); }
+    .leak-banner.severity-info  { border-color: rgba(122, 215, 255, 0.4); background: rgba(122, 215, 255, 0.07); }
+    .leak-banner h4 { margin: 0 0 4px; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pink); }
+    .leak-banner p { margin: 4px 0; color: var(--ink); font-size: 14px; }
+    .leak-banner .action { color: var(--green); font-weight: 600; }
+    .pill.ml-on { color: var(--blue); border-color: rgba(122, 215, 255, 0.4); }
+    .pill.ml-off { color: var(--muted); }
+    .pill.leader-on  { color: var(--green); border-color: rgba(148, 255, 152, 0.4); }
+    .pill.leader-off { color: var(--amber); border-color: rgba(255, 211, 106, 0.4); }
+    .pill.live-on    { color: var(--red);   border-color: rgba(255, 107, 107, 0.5); }
+    .pill.live-off   { color: var(--muted); }
+    .heatmap-grid {
+      display: grid;
+      grid-template-columns: 50px repeat(24, minmax(14px, 1fr));
+      gap: 2px;
+      margin-top: 8px;
+      font-size: 10px;
+      align-items: center;
+    }
+    .heatmap-grid .cell {
+      height: 22px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.04);
+      cursor: help;
+    }
+    .heatmap-grid .cell.empty { background: rgba(255, 255, 255, 0.03); }
+    .heatmap-grid .label { color: var(--muted); font-size: 11px; padding-right: 6px; text-align: right; }
+    .heatmap-grid .header { color: var(--muted); font-size: 9px; text-align: center; }
+    #chart-container {
+      width: 100%;
+      height: 380px;
+      border-radius: 18px;
+      background: rgba(0, 0, 0, 0.32);
+      border: 1px solid var(--line);
+      margin-top: 10px;
+      overflow: hidden;
+    }
+    .chart-controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+    .paper-order {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.03);
+      margin-bottom: 8px;
+    }
+    .paper-order.closed-target { border-color: rgba(148, 255, 152, 0.35); }
+    .paper-order.closed-stop   { border-color: rgba(255, 107, 107, 0.45); }
+    .paper-order.closed-manual { border-color: rgba(255, 211, 106, 0.4); }
+    .paper-order .meta { color: var(--muted); font-size: 12px; }
+    .paper-order .pnl { font-weight: 700; font-size: 14px; }
+    .pnl.green { color: var(--green); }
+    .pnl.red   { color: var(--red); }
+    .sizer-line {
+      grid-column: span 4;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .sizer-line button { padding: 9px 15px; font-size: 12px; }
+    .sizer-line .hint { color: var(--muted); font-size: 12px; }
+    @media (max-width: 980px) {
+      .heatmap-grid { grid-template-columns: 50px repeat(24, minmax(10px, 1fr)); }
+      #chart-container { height: 300px; }
+    }
   </style>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
   <main>
+    <nav class="cockpit-shell" aria-label="Trader cockpit command bar">
+      <div class="cockpit-brand">
+        <div class="orb" aria-hidden="true"></div>
+        <div>
+          <strong>MEXC live exposure</strong>
+          <span>BTC / ETH / SOL futures cockpit · signals, journal, charts, positions</span>
+        </div>
+      </div>
+      <div class="cockpit-actions">
+        <span class="pill trade-firewall">real orders gated</span>
+        <span class="pill info">paper-fire first</span>
+        <span class="pill pending">accountability on</span>
+      </div>
+    </nav>
+    <div id="leak-banner" class="leak-banner"></div>
     <section class="hero">
       <div class="plate intro">
         <p class="eyebrow">MEXC futures accountability cockpit</p>
@@ -1235,7 +1877,13 @@ function renderApp(): string {
         <p class="lede">BTC, ETH, and SOL futures. Longs, shorts, scalps, and longer plays. The cockpit pulls live signals, the accountability engine argues with you, and Telegram confirms before anything counts as a real plan.</p>
       </div>
       <aside class="plate status">
-        <h2>Risk modes <span id="telegram-status" class="telegram-pill off">telegram off</span></h2>
+        <h2>
+          Risk modes
+          <span id="telegram-status" class="telegram-pill off">telegram off</span>
+          <span id="leader-status" class="pill leader-off">leader: ?</span>
+          <span id="ml-status" class="pill ml-off">ml: off</span>
+          <span id="live-status" class="pill live-off">live-fire: off</span>
+        </h2>
         <div class="mode-grid">
           <div class="mode"><strong>Sniper</strong><span>30x-100x, small margin, tight invalidation, fast review. Built for risky snipes without letting size drift.</span></div>
           <div class="mode"><strong>Medium</strong><span>10x-50x, faster than core but not full-send. Built for clean BTC/ETH/SOL setups that need discipline more than adrenaline.</span></div>
@@ -1334,6 +1982,18 @@ function renderApp(): string {
           <label class="span-2">Generated from signal ID (optional)
             <input name="generatedFromSignalId" placeholder="signal_...">
           </label>
+          <div class="sizer-line">
+            <button id="suggest-size" type="button">Suggest size from bankroll</button>
+            <label style="text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted);">
+              risk %:
+              <input id="sizer-risk-pct" inputmode="decimal" value="0.5" style="width:64px;display:inline-block;padding:6px 8px;margin-left:6px;">
+            </label>
+            <label style="text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted);">
+              bankroll override (USDT):
+              <input id="sizer-bankroll" inputmode="decimal" placeholder="auto" style="width:80px;display:inline-block;padding:6px 8px;margin-left:6px;">
+            </label>
+            <span id="sizer-result" class="hint">click to size from your free USDT</span>
+          </div>
           <div class="quick-panel">
             <strong>Fast trade controls</strong>
             <div class="quick-row" aria-label="risk mode presets">
@@ -1364,6 +2024,7 @@ function renderApp(): string {
           <div class="actions">
             <button type="submit" data-save="0">Review only</button>
             <button type="submit" data-save="1" class="secondary">Review + save + Telegram</button>
+            <button type="submit" data-save="fire" class="secondary">Review + save + paper-fire</button>
           </div>
         </form>
         <div id="verdict" class="verdict">
@@ -1429,6 +2090,67 @@ function renderApp(): string {
         </div>
       </aside>
     </section>
+
+    <!-- Suggestion-list rollout: heat map (#6) + chart (#8) + paper orders (#1) -->
+    <section class="layout">
+      <div class="plate card">
+        <h2>Live chart with your fills <span id="chart-meta" class="pill">no data yet</span></h2>
+        <div class="chart-controls">
+          <select id="chart-symbol">
+            <option>BTCUSDT</option>
+            <option>ETHUSDT</option>
+            <option>SOLUSDT</option>
+          </select>
+          <select id="chart-interval">
+            <option value="Min15" selected>15m</option>
+            <option value="Min5">5m</option>
+            <option value="Min1">1m</option>
+            <option value="Hour1">1h</option>
+            <option value="Hour4">4h</option>
+            <option value="Day1">1d</option>
+          </select>
+          <button id="chart-reload" class="small" type="button">Reload chart</button>
+        </div>
+        <div id="chart-container"></div>
+        <p style="color:var(--muted); font-size:12px; margin-top:8px;">
+          Triangles mark journal entries (TJ#); arrows mark paper-fired entries; circles mark closes.
+          Green = win, red = loss, amber = paper-open, blue = live-open.
+        </p>
+      </div>
+
+      <aside class="plate card">
+        <h2>Hour-of-day heat map</h2>
+        <div id="heatmap-output">
+          <p class="lede" style="margin-top:6px; font-size:13px;">Color = avg net PnL per UTC hour. Run <code>pnpm history:ingest --days 60</code> to populate.</p>
+          <div id="heatmap-grid" class="heatmap-grid"><div class="empty" style="grid-column: span 25;">Loading hour-of-day expectancy…</div></div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="layout">
+      <div class="plate card">
+        <h2>Paper orders <span id="paper-orders-meta" class="pill">idle</span></h2>
+        <p class="lede" style="font-size:13px; margin-top:4px;">
+          Approving a journal row inserts a paper order. The simulator marks it <b>closed_target</b>
+          or <b>closed_stop</b> when the live MEXC mark price crosses the level. Realized PnL accumulates here.
+          When <code>LIVE_FUTURES_FIRING=true</code>, this becomes the live ledger.
+        </p>
+        <div id="paper-open" class="journal" style="margin-top:10px;"><div class="empty">No open paper orders.</div></div>
+        <h3 style="margin:18px 0 6px; font-size:14px; letter-spacing:0.1em; color:var(--muted); text-transform:uppercase;">Recently closed</h3>
+        <div id="paper-recent" class="journal"><div class="empty">No closed paper orders yet.</div></div>
+      </div>
+
+      <aside class="plate card">
+        <h2>ML signal status</h2>
+        <div id="ml-detail">
+          <p class="lede" style="font-size:13px;">
+            CPU-only XGBoost classifier per symbol. Trains on your last 60 days of MEXC futures candles
+            using <code>ml/train.py</code>; loads via <code>onnxruntime-node</code> in the cockpit.
+          </p>
+          <div id="ml-models" class="journal"><div class="empty">No models trained yet. Run <code>pnpm ml:train -- --symbol BTCUSDT --candles ./data/cache/btc-15m.json</code>.</div></div>
+        </div>
+      </aside>
+    </section>
   </main>
 
   <script>
@@ -1461,7 +2183,7 @@ function renderApp(): string {
     const scanMetaEl = document.querySelector("#scan-meta");
     const settingsStatusEl = document.querySelector("#settings-status");
     const telegramStatusEl = document.querySelector("#telegram-status");
-    let saveNext = false;
+    let submitMode = "review";
     let autoPollTimer = null;
     let modelScanInFlight = false;
     let telegramEnabled = false;
@@ -1981,16 +2703,59 @@ function renderApp(): string {
         }).join("");
     }
 
+    function loadPositionIntoIntake(position) {
+      if (!position) return;
+      const entry = Number(position.markPrice || position.entryPrice || 0);
+      const direction = position.side === "short" ? "short" : "long";
+      const stop = direction === "long" ? entry * 0.996 : entry * 1.004;
+      const target = direction === "long" ? entry * 1.01 : entry * 0.99;
+      const margin = Number(position.leverage || 0) > 0
+        ? Number(position.notionalQuote || 0) / Number(position.leverage || 1)
+        : Number(position.notionalQuote || 0);
+      const map = {
+        symbol: position.symbol,
+        direction,
+        horizon: "scalp",
+        riskMode: Number(position.leverage || 0) > 50 ? "sniper" : "medium",
+        leverage: Number(position.leverage || 0) || 20,
+        marginQuote: margin > 0 ? margin.toFixed(2) : activeSettings.defaultMarginQuote,
+        entryPrice: entry > 0 ? entry.toFixed(position.symbol === "SOLUSDT" ? 4 : 2) : "",
+        stopLossPrice: entry > 0 ? stop.toFixed(position.symbol === "SOLUSDT" ? 4 : 2) : "",
+        takeProfitPrice: entry > 0 ? target.toFixed(position.symbol === "SOLUSDT" ? 4 : 2) : "",
+      };
+      for (const [name, value] of Object.entries(map)) {
+        const el = form.elements.namedItem(name);
+        if (el) el.value = value;
+      }
+      const thesisEl = form.elements.namedItem("thesis");
+      const noteEl = form.elements.namedItem("journalNote");
+      if (thesisEl) {
+        thesisEl.value =
+          "Loaded from current live MEXC futures position. I need to confirm whether this still has edge, where it invalidates, and whether leverage is justified.";
+        thesisEl.dataset.autofilled = "1";
+      }
+      if (noteEl) {
+        noteEl.value =
+          "Live position accountability check: define stop/TP now, do not widen the stop, and do not add size unless the setup board agrees.";
+        noteEl.dataset.autofilled = "1";
+      }
+      form.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
     function renderAccountStatus(status) {
       if (!status.available) {
+        const rejected = status.reason === "api_rejected";
         accountEl.innerHTML =
-          "<article class='entry'><div class='entry-head'><strong>Futures account</strong><span class='pill pending'>read-only unavailable</span></div>" +
+          "<article class='entry'><div class='entry-head'><strong>Futures account</strong><span class='pill " + (rejected ? "block" : "pending") + "'>" + (rejected ? "MEXC rejected private read" : "read-only unavailable") + "</span></div>" +
           "<p>" + escapeHtml(status.message || "Missing futures credentials.") + "</p>" +
-          "<p><span class='pill'>safe mode</span> Signals, backtests, setup board, and journal still work.</p></article>";
+          "<p><span class='pill'>safe mode</span> Signals, backtests, setup board, charts, and journal still work.</p>" +
+          (rejected ? "<p><span class='pill pending'>check MEXC API IP whitelist</span> Current API calls are authenticated but blocked before positions can load.</p>" : "") +
+          "</article>";
         return;
       }
       const s = status.snapshot;
       const positions = s.positions || [];
+      const openOrders = s.openOrders || [];
       accountEl.innerHTML =
         "<article class='entry'>" +
           "<div class='entry-head'><strong>USDT margin</strong><span class='pill ok'>connected</span></div>" +
@@ -2007,9 +2772,34 @@ function renderApp(): string {
                 "<div class='entry-head'><strong>" + escapeHtml(p.symbol) + " " + escapeHtml(String(p.side).toUpperCase()) + "</strong><span class='pill " + (Number(p.unrealizedPnl || 0) >= 0 ? "ok" : "block") + "'>" + money(p.unrealizedPnl) + "</span></div>" +
                 "<p><span class='pill'>" + Number(p.leverage || 0).toFixed(0) + "x</span> <span class='pill'>notional " + Number(p.notionalQuote || 0).toFixed(2) + "</span> <span class='pill'>entry " + Number(p.entryPrice || 0).toFixed(4) + "</span> <span class='pill'>mark " + Number(p.markPrice || 0).toFixed(4) + "</span></p>" +
                 (p.liquidationPrice ? "<p><span class='pill block'>liq " + Number(p.liquidationPrice || 0).toFixed(4) + "</span> <span class='pill'>" + escapeHtml(p.marginMode || "margin") + "</span></p>" : "") +
+                "<div class='quick-row' style='margin-top:10px'><button class='chip trade-firewall' type='button' data-use-position='" + encodeURIComponent(JSON.stringify(p)) + "'>Use position</button><span class='pill info'>loads intake + suggested stop/TP</span></div>" +
               "</article>"
             ).join("")
-          : "<article class='entry'><div class='entry-head'><strong>Open positions</strong><span class='pill ok'>flat</span></div><p>No BTC/ETH/SOL futures positions reported.</p></article>");
+          : "<article class='entry'><div class='entry-head'><strong>Open positions</strong><span class='pill ok'>flat</span></div><p>No BTC/ETH/SOL futures positions reported.</p></article>") +
+        (openOrders.length
+          ? "<article class='entry'><div class='entry-head'><strong>Open orders</strong><span class='pill pending'>" + openOrders.length + " resting</span></div>" +
+            openOrders.map((order) =>
+              "<div class='strategy-row'>" +
+                "<span class='pill'>" + escapeHtml(order.symbol) + "</span>" +
+                "<span class='pill " + (order.side === "buy" ? "ok" : "pending") + "'>" + escapeHtml(String(order.side).toUpperCase()) + "</span>" +
+                "<span class='pill'>" + escapeHtml(order.type || "order") + "</span>" +
+                "<span class='pill'>price " + (order.price ? Number(order.price).toFixed(4) : "market") + "</span>" +
+                "<span class='pill'>amount " + Number(order.amount || 0).toFixed(6) + "</span>" +
+                "<span class='pill'>filled " + Number(order.filled || 0).toFixed(6) + "</span>" +
+                (order.clientOrderId ? "<span class='pill'>cid " + escapeHtml(order.clientOrderId) + "</span>" : "") +
+              "</div>"
+            ).join("") +
+          "</article>"
+          : "<article class='entry'><div class='entry-head'><strong>Open orders</strong><span class='pill ok'>none</span></div><p>No resting BTC/ETH/SOL futures orders reported.</p></article>");
+      accountEl.querySelectorAll("[data-use-position]").forEach((button) => {
+        button.addEventListener("click", () => {
+          try {
+            loadPositionIntoIntake(JSON.parse(decodeURIComponent(button.dataset.usePosition || "")));
+          } catch (err) {
+            console.error("position load failed", err);
+          }
+        });
+      });
     }
 
     function renderSetupBoard(data) {
@@ -2245,7 +3035,7 @@ function renderApp(): string {
 
     form.addEventListener("click", (event) => {
       if (event.target instanceof HTMLButtonElement && event.target.type === "submit") {
-        saveNext = event.target.dataset.save === "1";
+        submitMode = event.target.dataset.save || "review";
       }
     });
 
@@ -2258,7 +3048,8 @@ function renderApp(): string {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       verdictEl.innerHTML = "<h3>Reviewing...</h3>";
-      const res = await fetch("/api/review" + (saveNext ? "?save=1" : ""), {
+      const shouldSave = submitMode === "1" || submitMode === "fire";
+      const res = await fetch("/api/review" + (shouldSave ? "?save=1" : ""), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(formPayload()),
@@ -2270,6 +3061,9 @@ function renderApp(): string {
         return;
       }
       renderVerdict(body);
+      if (submitMode === "fire" && body.savedId) {
+        await paperFireFromVerdict(body.savedId);
+      }
       await loadJournal();
     });
 
@@ -2391,6 +3185,327 @@ function renderApp(): string {
       setupBoardEl.innerHTML = "<div class='empty'>Setup board failed: " + escapeHtml(String(err)) + "</div>";
     });
 
+    // ---------- Suggestion-list rollout JS (#1 paper / #3 leak / #4 sizer / #6 heatmap / #8 chart / #9 ml / #10 leader) ----------
+    const leakBannerEl = document.querySelector("#leak-banner");
+    const leaderStatusEl = document.querySelector("#leader-status");
+    const mlStatusPillEl = document.querySelector("#ml-status");
+    const liveStatusEl = document.querySelector("#live-status");
+    const suggestSizeBtn = document.querySelector("#suggest-size");
+    const sizerRiskPctInput = document.querySelector("#sizer-risk-pct");
+    const sizerBankrollInput = document.querySelector("#sizer-bankroll");
+    const sizerResultEl = document.querySelector("#sizer-result");
+    const heatmapGridEl = document.querySelector("#heatmap-grid");
+    const chartContainerEl = document.querySelector("#chart-container");
+    const chartSymbolEl = document.querySelector("#chart-symbol");
+    const chartIntervalEl = document.querySelector("#chart-interval");
+    const chartReloadBtn = document.querySelector("#chart-reload");
+    const chartMetaEl = document.querySelector("#chart-meta");
+    const paperOpenEl = document.querySelector("#paper-open");
+    const paperRecentEl = document.querySelector("#paper-recent");
+    const paperOrdersMetaEl = document.querySelector("#paper-orders-meta");
+    const mlModelsEl = document.querySelector("#ml-models");
+    let chartObj = null;
+    let chartCandleSeries = null;
+
+    async function loadHealth() {
+      try {
+        const res = await fetch("/api/health");
+        const body = await res.json();
+        if (body.leader) {
+          leaderStatusEl.className = "pill " + (body.leader.isLeader ? "leader-on" : "leader-off");
+          leaderStatusEl.textContent = body.leader.isLeader ? "leader" : "follower";
+        } else {
+          leaderStatusEl.className = "pill leader-off";
+          leaderStatusEl.textContent = "leader: redis off";
+        }
+        if (body.ml && body.ml.available) {
+          mlStatusPillEl.className = "pill ml-on";
+          mlStatusPillEl.textContent = "ml: " + body.ml.models.length + " model" + (body.ml.models.length === 1 ? "" : "s");
+        } else {
+          mlStatusPillEl.className = "pill ml-off";
+          mlStatusPillEl.textContent = "ml: off";
+        }
+        if (body.liveFiringEnabled) {
+          liveStatusEl.className = "pill live-on";
+          liveStatusEl.textContent = "live-fire: ON";
+        } else {
+          liveStatusEl.className = "pill live-off";
+          liveStatusEl.textContent = "live-fire: paper";
+        }
+      } catch (err) { console.error("loadHealth", err); }
+    }
+
+    async function loadLeak() {
+      try {
+        const res = await fetch("/api/leak");
+        const body = await res.json();
+        if (!body.leak) {
+          leakBannerEl.className = "leak-banner";
+          leakBannerEl.innerHTML = "";
+          return;
+        }
+        const leak = body.leak;
+        leakBannerEl.className = "leak-banner show severity-" + leak.severity;
+        leakBannerEl.innerHTML =
+          "<h4>Leak of the day · " + escapeHtml(leak.code) + "</h4>" +
+          "<p><b>" + escapeHtml(leak.headline) + "</b></p>" +
+          "<p>" + escapeHtml(leak.detail) + "</p>" +
+          "<p class='action'>→ " + escapeHtml(leak.actionHint) + "</p>";
+      } catch (err) { console.error("loadLeak", err); }
+    }
+
+    async function loadMlStatus() {
+      try {
+        const res = await fetch("/api/ml/status");
+        const body = await res.json();
+        if (!body.status.available) {
+          mlModelsEl.innerHTML = "<div class='empty'>" + escapeHtml(body.status.reason) + "</div>";
+          return;
+        }
+        mlModelsEl.innerHTML = body.status.models.map((m) => {
+          const age = body.ageDaysBySymbol[m.symbol];
+          const meta = m.meta;
+          return "<article class='entry'>" +
+            "<div class='entry-head'><strong>" + escapeHtml(m.symbol) + "</strong>" +
+            "<span class='pill ml-on'>" + (age == null ? "fresh" : age + "d old") + "</span></div>" +
+            (meta ? "<p>samples " + meta.samples + " · self-fit accuracy " + (Number(meta.winRate) * 100).toFixed(1) + "%</p>" : "<p>(model loaded; no meta.json)</p>") +
+            (meta && meta.notes ? "<p style='color:var(--muted);font-size:12px;'>" + escapeHtml(meta.notes) + "</p>" : "") +
+          "</article>";
+        }).join("");
+      } catch (err) { console.error("loadMlStatus", err); }
+    }
+
+    async function loadPaperOrders() {
+      try {
+        const res = await fetch("/api/paper-orders");
+        const body = await res.json();
+        paperOrdersMetaEl.textContent = body.liveFiringEnabled
+          ? "LIVE firing on · " + body.open.length + " open"
+          : "paper · " + body.open.length + " open · realized " + body.realizedPnlQuote.toFixed(2) + " USDT";
+        if (body.open.length === 0) {
+          paperOpenEl.innerHTML = "<div class='empty'>No open paper orders. Save an approved journal row, then click Paper-fire latest below.</div>" +
+            "<button id='fire-latest' class='small' type='button' style='margin-top:8px;'>Paper-fire latest approved plan</button>";
+        } else {
+          paperOpenEl.innerHTML = body.open.map((o) =>
+            "<div class='paper-order'>" +
+              "<div>" +
+                "<strong>" + escapeHtml(o.symbol) + " " + escapeHtml(o.direction.toUpperCase()) + " " + o.leverage + "x</strong>" +
+                "<div class='meta'>entry " + o.entryPrice + " · stop " + o.stopLossPrice + " · target " + o.takeProfitPrice + " · margin " + Number(o.marginQuote).toFixed(2) + " USDT" + (o.isLive ? " · LIVE" : "") + "</div>" +
+              "</div>" +
+              "<button class='small secondary' data-close-paper='" + o.id + "' data-entry='" + o.entryPrice + "' type='button'>Close</button>" +
+            "</div>"
+          ).join("") + "<button id='fire-latest' class='small' type='button' style='margin-top:10px;'>Paper-fire latest approved plan</button>";
+        }
+        const closed = body.recent.filter((o) => o.status !== "open");
+        if (closed.length === 0) {
+          paperRecentEl.innerHTML = "<div class='empty'>No closed paper orders yet.</div>";
+        } else {
+          paperRecentEl.innerHTML = closed.slice(0, 12).map((o) => {
+            const pnl = Number(o.realizedPnlQuote || 0);
+            return "<div class='paper-order " + o.status + "'>" +
+              "<div>" +
+                "<strong>" + escapeHtml(o.symbol) + " " + escapeHtml(o.direction.toUpperCase()) + " " + o.leverage + "x</strong>" +
+                "<div class='meta'>" + escapeHtml(o.status) + " @ " + (o.exitPrice ?? "?") + " · " + new Date(o.closedAtMs ?? o.placedAtMs).toLocaleString() + "</div>" +
+              "</div>" +
+              "<span class='pnl " + (pnl >= 0 ? "green" : "red") + "'>" + (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "</span>" +
+            "</div>";
+          }).join("");
+        }
+        paperOpenEl.querySelectorAll("button[data-close-paper]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = Number(btn.dataset.closePaper);
+            const entryDefault = btn.dataset.entry;
+            const exitInput = prompt("Manual close exit price:", entryDefault);
+            if (!exitInput) return;
+            const px = Number(exitInput);
+            if (!Number.isFinite(px) || px <= 0) { alert("invalid exit price"); return; }
+            const r = await fetch("/api/paper-orders/close", {
+              method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id, exitPrice: px }),
+            });
+            await r.json();
+            await Promise.all([loadPaperOrders(), loadChart()]);
+          });
+        });
+        const fireLatestBtn = paperOpenEl.querySelector("#fire-latest");
+        if (fireLatestBtn) fireLatestBtn.addEventListener("click", paperFireLatest);
+      } catch (err) { console.error("loadPaperOrders", err); }
+    }
+
+    async function paperFireLatest() {
+      try {
+        const r = await fetch("/api/journal");
+        const j = await r.json();
+        const candidate = (j.entries || []).find((e) => e.okToProceed && e.approvalStatus !== "rejected");
+        if (!candidate) { alert("no approvable journal entry yet — save one first"); return; }
+        await paperFireFromVerdict(candidate.id);
+      } catch (err) { alert("paper-fire failed: " + String(err)); }
+    }
+
+    async function paperFireFromVerdict(savedId) {
+      const r = await fetch("/api/fire", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ journalId: savedId }),
+      });
+      const body = await r.json();
+      if (!r.ok) { alert("paper-fire failed: " + (body.message || "unknown")); return; }
+      await Promise.all([loadPaperOrders(), loadChart()]);
+      alert("paper-fired #" + body.paperOrderId + " from journal#" + body.journalId);
+    }
+    window.paperFireFromVerdict = paperFireFromVerdict;
+
+    function renderHeatMap(historyAnalysis) {
+      if (!historyAnalysis || !historyAnalysis.symbols) {
+        heatmapGridEl.innerHTML = "<div class='empty' style='grid-column: span 25;'>No history yet.</div>";
+        return;
+      }
+      const symbols = historyAnalysis.symbols.filter((s) => s.fingerprint && s.fingerprint.sampleCount > 0);
+      if (symbols.length === 0) {
+        heatmapGridEl.innerHTML = "<div class='empty' style='grid-column: span 25;'>Not enough closed trades. Run pnpm history:ingest first.</div>";
+        return;
+      }
+      let html = "<div class='label'></div>";
+      for (let h = 0; h < 24; h += 1) {
+        html += "<div class='header'>" + (h % 3 === 0 ? String(h).padStart(2, "0") : "") + "</div>";
+      }
+      for (const s of symbols) {
+        html += "<div class='label'>" + escapeHtml(s.symbol) + "</div>";
+        const expectancy = (s.fingerprint && s.fingerprint.hourOfDayExpectancy) || {};
+        let maxAbs = 0.01;
+        for (const k of Object.keys(expectancy)) {
+          maxAbs = Math.max(maxAbs, Math.abs(Number(expectancy[k].avgNetPnlQuote ?? 0)));
+        }
+        for (let h = 0; h < 24; h += 1) {
+          const e = expectancy[String(h)];
+          if (!e) {
+            html += "<div class='cell empty' title='" + escapeHtml(s.symbol) + " " + h + "h: no trades'></div>";
+            continue;
+          }
+          const avg = Number(e.avgNetPnlQuote || 0);
+          const intensity = Math.min(1, Math.abs(avg) / maxAbs);
+          const color = avg >= 0
+            ? "rgba(148, 255, 152, " + (0.15 + 0.65 * intensity).toFixed(2) + ")"
+            : "rgba(255, 107, 107, " + (0.15 + 0.65 * intensity).toFixed(2) + ")";
+          const tooltip = escapeHtml(s.symbol) + " " + String(h).padStart(2,"0") + ":00 UTC · n=" + e.sampleCount + " avg " + avg.toFixed(2) + " USDT win " + (Number(e.winRate ?? 0)*100).toFixed(0) + "%";
+          html += "<div class='cell' style='background:" + color + "' title='" + tooltip + "'></div>";
+        }
+      }
+      heatmapGridEl.innerHTML = html;
+    }
+
+    async function loadHeatMap() {
+      try {
+        const res = await fetch("/api/history-analysis");
+        const body = await res.json();
+        renderHeatMap(body);
+      } catch (err) { console.error("loadHeatMap", err); }
+    }
+
+    function setupChart() {
+      if (!window.LightweightCharts) {
+        chartContainerEl.innerHTML = "<div class='empty'>lightweight-charts CDN script failed to load.</div>";
+        return false;
+      }
+      const w = chartContainerEl.clientWidth || 600;
+      const h = chartContainerEl.clientHeight || 380;
+      chartObj = LightweightCharts.createChart(chartContainerEl, {
+        width: w, height: h,
+        layout: { background: { color: "transparent" }, textColor: "#a79e8d" },
+        grid: { vertLines: { color: "rgba(244,239,227,0.06)" }, horzLines: { color: "rgba(244,239,227,0.06)" } },
+        timeScale: { timeVisible: true, secondsVisible: false, borderColor: "rgba(244,239,227,0.18)" },
+        rightPriceScale: { borderColor: "rgba(244,239,227,0.18)" },
+      });
+      chartCandleSeries = chartObj.addCandlestickSeries({
+        upColor: "#94ff98", downColor: "#ff6b6b", borderUpColor: "#94ff98", borderDownColor: "#ff6b6b",
+        wickUpColor: "#94ff98", wickDownColor: "#ff6b6b",
+      });
+      window.addEventListener("resize", () => {
+        if (chartObj && chartContainerEl) {
+          chartObj.applyOptions({ width: chartContainerEl.clientWidth, height: chartContainerEl.clientHeight });
+        }
+      });
+      return true;
+    }
+
+    async function loadChart() {
+      if (!chartObj) { if (!setupChart()) return; }
+      const symbol = chartSymbolEl.value;
+      const interval = chartIntervalEl.value;
+      chartMetaEl.textContent = "loading " + symbol + " " + interval + "...";
+      try {
+        const res = await fetch("/api/candles?symbol=" + symbol + "&interval=" + interval + "&limit=240");
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.message || "candles failed");
+        const candles = (body.candles || []).map((c) => ({
+          time: c.timeSec, open: c.open, high: c.high, low: c.low, close: c.close,
+        }));
+        chartCandleSeries.setData(candles);
+        if (body.markers && body.markers.length > 0) {
+          chartCandleSeries.setMarkers(body.markers.map((m) => ({
+            time: m.timeSec, position: m.position, color: m.color, shape: m.shape, text: m.label,
+          })));
+        } else {
+          chartCandleSeries.setMarkers([]);
+        }
+        chartObj.timeScale().fitContent();
+        chartMetaEl.textContent = symbol + " " + interval + " · " + candles.length + " bars";
+      } catch (err) {
+        chartMetaEl.textContent = "chart load failed";
+        console.error("loadChart", err);
+      }
+    }
+
+    async function suggestSize() {
+      const formData = formPayload();
+      const planForSizer = {
+        direction: formData.direction,
+        entryPrice: Number(formData.entryPrice),
+        stopLossPrice: Number(formData.stopLossPrice),
+        riskMode: formData.riskMode,
+      };
+      const riskPctInput = Number(sizerRiskPctInput.value);
+      const bankrollInput = Number(sizerBankrollInput.value);
+      const body = { plan: planForSizer };
+      if (Number.isFinite(riskPctInput) && riskPctInput > 0) body.riskOfAccountPct = riskPctInput / 100;
+      if (Number.isFinite(bankrollInput) && bankrollInput > 0) body.bankrollUsdt = bankrollInput;
+      sizerResultEl.textContent = "computing...";
+      try {
+        const res = await fetch("/api/sizer", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.message || "sizer failed");
+        const s = result.suggestion;
+        const lev = form.elements.namedItem("leverage");
+        const mar = form.elements.namedItem("marginQuote");
+        if (lev) lev.value = s.leverage;
+        if (mar) mar.value = s.marginQuote;
+        sizerResultEl.textContent =
+          (result.bankrollSource === "manual-override" ? "override " : result.bankrollSource === "mexc-futures-account" ? "MEXC " : "no-bankroll ") +
+          "bankroll " + Number(result.freeUsdt).toFixed(2) + " USDT → " + s.marginQuote + " USDT × " + s.leverage + "x · max-loss " + Number(s.maxLossQuote).toFixed(2) + " · " + s.clampedTo;
+      } catch (err) {
+        sizerResultEl.textContent = "sizer error: " + String(err);
+      }
+    }
+
+    if (suggestSizeBtn) suggestSizeBtn.addEventListener("click", suggestSize);
+    if (chartReloadBtn) chartReloadBtn.addEventListener("click", () => { void loadChart(); });
+    if (chartSymbolEl) chartSymbolEl.addEventListener("change", () => { void loadChart(); });
+    if (chartIntervalEl) chartIntervalEl.addEventListener("change", () => { void loadChart(); });
+
+    loadHealth().catch(() => {});
+    loadLeak().catch(() => {});
+    loadPaperOrders().catch(() => {});
+    loadMlStatus().catch(() => {});
+    loadHeatMap().catch(() => {});
+    setTimeout(() => { void loadChart(); }, 250);  // give CDN script a tick to attach
+    setInterval(() => {
+      void loadHealth();
+      void loadLeak();
+      void loadPaperOrders();
+      void loadHeatMap();
+    }, 60_000);
+
     // Kick off the auto-poll loop immediately — this is the product: live signals streamed into the cockpit.
     runModelScan("boot").catch((err) => console.error("boot-scan failed:", err));
     startAutoPoll();
@@ -2418,6 +3533,32 @@ async function buildStatusMessage(): Promise<string> {
 }
 
 async function main(): Promise<void> {
+  // Acquire the leader lease before serving mutating endpoints. Best-effort —
+  // if Redis is down, leaderLease stays null and the cockpit falls back to
+  // "leader: redis off" (single-instance mode, no lease). The cockpit blocks
+  // /api/fire + /api/paper-orders/close when this instance isn't the leader.
+  try {
+    leaderRedis = createRedis();
+    leaderLease = await startLeaderLease({
+      redis: leaderRedis,
+      onChange: (status) => {
+        log.info({ status }, "leader lease state changed");
+      },
+    });
+    log.info({ status: leaderLease.status() }, "leader lease initialized");
+  } catch (err) {
+    log.warn({ err }, "leader lease unavailable — cockpit running single-instance");
+    if (leaderRedis !== null) {
+      try {
+        leaderRedis.disconnect();
+      } catch {
+        /* ignore */
+      }
+      leaderRedis = null;
+    }
+    leaderLease = null;
+  }
+
   dispatcher = await startTelegramDispatcher({
     secrets: new WindowsCredentialManagerProvider(),
     log,
@@ -2471,6 +3612,22 @@ async function main(): Promise<void> {
     if (dispatcher !== null) {
       await dispatcher.stop();
       dispatcher = null;
+    }
+    if (leaderLease !== null) {
+      try {
+        await leaderLease.stop();
+      } catch (err) {
+        log.warn({ err }, "leader lease stop error (ignored)");
+      }
+      leaderLease = null;
+    }
+    if (leaderRedis !== null) {
+      try {
+        leaderRedis.disconnect();
+      } catch {
+        /* ignore */
+      }
+      leaderRedis = null;
     }
     process.exit(0);
   };

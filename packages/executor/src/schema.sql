@@ -111,6 +111,35 @@ CREATE TABLE IF NOT EXISTS executor_state (
   updated_at_ms INTEGER NOT NULL
 );
 
+-- Paper-fire ledger (Phase 6 paper-mode). When LIVE_FUTURES_FIRING is off or
+-- futures creds are absent, "Approve" inserts a row here instead of placing a
+-- real order on MEXC. The simulator (executor.simulatePaperOrders) marks
+-- 'open' rows as 'closed_target' / 'closed_stop' when live mark price crosses
+-- the level, recording realized PnL. is_live = 1 means a real order was
+-- placed; 0 = paper. Linked to trade_journal so the cockpit shows "TJ#7 →
+-- paper-fired" / "TJ#7 → live-fired" inline.
+CREATE TABLE IF NOT EXISTS paper_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  journal_id INTEGER REFERENCES trade_journal(id),
+  symbol TEXT NOT NULL CHECK (symbol IN ('BTCUSDT','ETHUSDT','SOLUSDT')),
+  direction TEXT NOT NULL CHECK (direction IN ('long','short')),
+  leverage REAL NOT NULL,
+  margin_quote REAL NOT NULL,
+  entry_price REAL NOT NULL,
+  stop_loss_price REAL NOT NULL,
+  take_profit_price REAL NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('open','closed_target','closed_stop','closed_manual')),
+  is_live INTEGER NOT NULL CHECK (is_live IN (0,1)) DEFAULT 0,
+  placed_at_ms INTEGER NOT NULL,
+  closed_at_ms INTEGER,
+  exit_price REAL,
+  realized_pnl_quote REAL,
+  notes TEXT
+);
+CREATE INDEX IF NOT EXISTS paper_orders_journal_id ON paper_orders(journal_id);
+CREATE INDEX IF NOT EXISTS paper_orders_status ON paper_orders(status);
+CREATE INDEX IF NOT EXISTS paper_orders_placed_at_ms ON paper_orders(placed_at_ms);
+
 CREATE VIEW IF NOT EXISTS positions AS
 SELECT
   o.pair,

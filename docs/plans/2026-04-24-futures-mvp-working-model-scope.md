@@ -112,8 +112,9 @@ The Setup Board should be the cockpit's fast decision layer:
 The Live Account panel should be read-only at first:
 - show futures USDT total/free/used when MEXC futures credentials exist
 - show open futures positions with side, leverage, notional, entry, mark, liquidation, margin mode, and unrealized PnL
+- show resting BTC/ETH/SOL futures open orders with side, type, price, amount, filled amount, and clientOrderId so Matt can spot forgotten orders before adding risk
 - fail safe when credentials are missing by explaining which WCM entries are required
-- never place, modify, or close positions from the panel; panic and execution stay explicit commands until the risk model is proven
+- never silently place, modify, or close positions from the read-only exposure panel; panic and execution stay explicit, gated actions until the risk model is proven
 
 The Past-trade panel should coach behavior, not just report stats:
 - provide a one-click read-only import for recent BTC/ETH/SOL MEXC futures fills when futures credentials are configured
@@ -139,12 +140,13 @@ The local app and CLI should support this loop:
 5. Accountability layer asks why the trade exists.
 6. Risk layer blocks bad leverage mode, bad stops, bad targets, and poor risk/reward.
 7. Journal entry is saved whether the trade is approved or blocked.
-8. Future style analysis learns from both executed trades and rejected/blocked plans.
-9. Backtest Lab ranks the active strategy family before Matt risks capital.
-10. Past-trade analysis shows symbol + direction leaks so the app can say, "this is the kind of trade you usually mishandle."
-11. Strategy memory stores each Backtest Lab run and keeps a ranked view of breakout, EMA pullback, volume-profile, and adaptive-grid effectiveness by symbol.
-12. Fundamentals Pulse adds a macro/liquidity warning layer before the setup is treated as actionable.
-13. Quick Feedback turns each took/skipped/rule-broken decision into a machine-readable behavior receipt.
+8. If the plan is clean, Matt can click **Review + save + paper-fire** from the dashboard to create the ledger-backed trade immediately; live exchange firing stays behind an explicit live gate.
+9. Future style analysis learns from both executed trades and rejected/blocked plans.
+10. Backtest Lab ranks the active strategy family before Matt risks capital.
+11. Past-trade analysis shows symbol + direction leaks so the app can say, "this is the kind of trade you usually mishandle."
+12. Strategy memory stores each Backtest Lab run and keeps a ranked view of breakout, EMA pullback, volume-profile, and adaptive-grid effectiveness by symbol.
+13. Fundamentals Pulse adds a macro/liquidity warning layer before the setup is treated as actionable.
+14. Quick Feedback turns each took/skipped/rule-broken decision into a machine-readable behavior receipt.
 
 ## Current Commands
 

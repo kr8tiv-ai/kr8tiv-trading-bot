@@ -18,27 +18,21 @@
  *   • Executor loop (Plan 02-03): startExecutor, buildApprovalHandler,
  *     parseApprovalDecided, ApprovalHandler type.
  */
-export * from "./types.js";
-export * from "./schema.js";
 
-export { makeClientOrderId } from "./idempotency.js";
 export { CircuitBreaker, DAILY_LOSS_BREAKER_USD } from "./breaker.js";
+export type { ApprovalHandler } from "./executor.js";
 export {
-  getFreeUsdtBalance,
-  isArmed,
-  recordOrder,
-  setArmed,
-  stalePositionsExist,
-} from "./state.js";
-export { RiskError, ensureOrderPossible } from "./risk-manager.js";
-export type { PreOrderCheck } from "./risk-manager.js";
+  buildApprovalHandler,
+  parseApprovalDecided,
+  startExecutor,
+} from "./executor.js";
 export { getTakerFeeBps, resetFeeCache } from "./fee-cache.js";
-export {
-  readRealizedPnlForUtcToday,
-  writeAcceptedOrRejected,
-  writeFill,
-  writeSubmitted,
-} from "./ledger.js";
+export { makeClientOrderId } from "./idempotency.js";
+export type {
+  SaveTradeJournalOptions,
+  TradeJournalApprovalStatus,
+  TradeJournalEntry,
+} from "./journal.js";
 export {
   findTradeJournalEntry,
   listRecentTradeJournalEntries,
@@ -46,15 +40,34 @@ export {
   recordTelegramDispatch,
   saveTradeJournalEntry,
 } from "./journal.js";
-export type {
-  SaveTradeJournalOptions,
-  TradeJournalApprovalStatus,
-  TradeJournalEntry,
-} from "./journal.js";
-export { panic } from "./panic.js";
 export {
-  buildApprovalHandler,
-  parseApprovalDecided,
-  startExecutor,
-} from "./executor.js";
-export type { ApprovalHandler } from "./executor.js";
+  readRealizedPnlForUtcToday,
+  writeAcceptedOrRejected,
+  writeFill,
+  writeSubmitted,
+} from "./ledger.js";
+export { panic } from "./panic.js";
+export type {
+  InsertPaperOrderArgs,
+  PaperOrder,
+  PaperOrderStatus,
+} from "./paper-orders.js";
+export {
+  closePaperOrderManual,
+  computeRealizedPnl,
+  insertPaperOrder,
+  listOpenPaperOrders,
+  listRecentPaperOrders,
+  tickPaperOrders,
+} from "./paper-orders.js";
+export type { PreOrderCheck } from "./risk-manager.js";
+export { ensureOrderPossible, RiskError } from "./risk-manager.js";
+export * from "./schema.js";
+export {
+  getFreeUsdtBalance,
+  isArmed,
+  recordOrder,
+  setArmed,
+  stalePositionsExist,
+} from "./state.js";
+export * from "./types.js";
