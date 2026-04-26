@@ -1,22 +1,24 @@
-import ccxt, { type Exchange } from "ccxt";
 import { env } from "@kr8tiv/config";
-import { unsafeReveal, type SecretProvider } from "@kr8tiv/secrets";
+import { type SecretProvider, unsafeReveal } from "@kr8tiv/secrets";
 import {
-  MarketCandleSchema,
+  type ImportedTrade,
   ImportedTradeSchema,
+  type MarketCandle,
+  MarketCandleSchema,
   MexcBalanceResponseSchema,
+  type MexcFuturesAccountSnapshot,
   MexcFuturesAccountSnapshotSchema,
   MexcFuturesFundingRateResponseSchema,
   MexcFuturesKlineResponseSchema,
+  type MexcFuturesMarketContext,
   MexcFuturesMarketContextSchema,
+  type MexcFuturesOpenOrder,
+  MexcFuturesOpenOrderSchema,
   MexcFuturesPingSchema,
   MexcFuturesTickerResponseSchema,
   MexcPingResponseSchema,
-  type ImportedTrade,
-  type MarketCandle,
-  type MexcFuturesAccountSnapshot,
-  type MexcFuturesMarketContext,
 } from "@kr8tiv/shared-schemas";
+import ccxt, { type Exchange } from "ccxt";
 
 export interface MEXCFuturesClientConfig {
   secrets: SecretProvider;
@@ -24,13 +26,8 @@ export interface MEXCFuturesClientConfig {
   baseUrl?: string;
 }
 
-export const SUPPORTED_FUTURES_SIGNAL_SYMBOLS = [
-  "BTCUSDT",
-  "ETHUSDT",
-  "SOLUSDT",
-] as const;
-export type SupportedFuturesSignalSymbol =
-  (typeof SUPPORTED_FUTURES_SIGNAL_SYMBOLS)[number];
+export const SUPPORTED_FUTURES_SIGNAL_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"] as const;
+export type SupportedFuturesSignalSymbol = (typeof SUPPORTED_FUTURES_SIGNAL_SYMBOLS)[number];
 
 export const FUTURES_KLINE_INTERVAL_MS = {
   Min1: 60_000,
@@ -55,11 +52,13 @@ export interface FetchFuturesTradesPageParams {
   limit?: number;
 }
 
+export interface FetchFuturesOpenOrdersParams {
+  symbols?: readonly (SupportedFuturesSignalSymbol | string)[];
+}
+
 const MarketCandleArraySchema = MarketCandleSchema.array();
 
-function toMexcContractSymbol(
-  symbol: FetchFuturesCandlesParams["symbol"],
-): string {
+function toMexcContractSymbol(symbol: FetchFuturesCandlesParams["symbol"]): string {
   if (!SUPPORTED_FUTURES_SIGNAL_SYMBOLS.includes(symbol as SupportedFuturesSignalSymbol)) {
     throw new Error(`unsupported futures symbol: ${symbol}`);
   }
@@ -76,17 +75,13 @@ function toCcxtSwapSymbol(symbol: FetchFuturesTradesPageParams["symbol"]): strin
 function fromCcxtSwapSymbol(symbol: unknown): SupportedFuturesSignalSymbol | null {
   if (typeof symbol !== "string") return null;
   const normalized = symbol.replace("/USDT:USDT", "USDT");
-  return SUPPORTED_FUTURES_SIGNAL_SYMBOLS.includes(
-    normalized as SupportedFuturesSignalSymbol,
-  )
+  return SUPPORTED_FUTURES_SIGNAL_SYMBOLS.includes(normalized as SupportedFuturesSignalSymbol)
     ? (normalized as SupportedFuturesSignalSymbol)
     : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : {};
+  return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
 function asNumber(value: unknown, fallback: number = 0): number {
@@ -98,6 +93,17 @@ function asNumber(value: unknown, fallback: number = 0): number {
   return fallback;
 }
 
+function asOptionalNumber(
+  value: unknown,
+  mode: "nonnegative" | "positive" = "nonnegative",
+): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = asNumber(value, Number.NaN);
+  if (!Number.isFinite(parsed)) return undefined;
+  if (mode === "positive") return parsed > 0 ? parsed : undefined;
+  return parsed >= 0 ? parsed : undefined;
+}
+
 function asString(value: unknown, fallback: string = ""): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
@@ -105,12 +111,13 @@ function asString(value: unknown, fallback: string = ""): string {
 /**
  * Read-only MEXC USDT-M futures (swap) client — STUB in Phase 1.
  *
- * Phase 1 behavior:
+ * Current behavior:
  * - Public ping works with NO authentication (futures ping is a public endpoint).
- * - If mexc-futures-access and mexc-futures-secret are NOT provisioned in the
- *   SecretProvider (expected in Phase 1 — futures creds come in Phase 6), the
- *   client constructs with empty apiKey/secret. Private methods would fail, but
- *   no private methods exist yet.
+ * - Prefer mexc-futures-access / mexc-futures-secret when provisioned.
+ * - Fall back to the existing mexc-spot-access / mexc-spot-secret key pair so a
+ *   single full-permission MEXC key can power read-only futures account panels.
+ * - If neither pair is present, construct with empty apiKey/secret; public
+ *   methods keep working and private read methods fail only when called.
  *
  * Phase 6 adds write-path methods (placeFuturesOrder, etc.) AND requires
  * futures credentials to be present.
@@ -123,6 +130,7 @@ function asString(value: unknown, fallback: string = ""): string {
 export class MEXCFuturesClient {
   readonly exchange: Exchange;
   readonly baseUrl: string;
+  private privateClockSync: Promise<void> | null = null;
 
   private constructor(exchange: Exchange, baseUrl: string) {
     this.exchange = exchange;
@@ -132,20 +140,23 @@ export class MEXCFuturesClient {
   static async create(config: MEXCFuturesClientConfig): Promise<MEXCFuturesClient> {
     const baseUrl = config.baseUrl ?? env.MEXC_FUTURES_BASE_URL;
 
-    // In Phase 1, futures credentials are expected to be absent. Public ping
-    // doesn't need them. We check `.has()` instead of `.get()` to avoid throwing.
-    const [hasAccess, hasSecret] = await Promise.all([
+    const [hasFuturesAccess, hasFuturesSecret, hasSpotAccess, hasSpotSecret] = await Promise.all([
       config.secrets.has("mexc-futures-access"),
       config.secrets.has("mexc-futures-secret"),
+      config.secrets.has("mexc-spot-access"),
+      config.secrets.has("mexc-spot-secret"),
     ]);
-    const authenticated = hasAccess && hasSecret;
+    const credentialNames =
+      hasFuturesAccess && hasFuturesSecret
+        ? (["mexc-futures-access", "mexc-futures-secret"] as const)
+        : hasSpotAccess && hasSpotSecret
+          ? (["mexc-spot-access", "mexc-spot-secret"] as const)
+          : null;
 
-    const apiKey = authenticated
-      ? unsafeReveal(await config.secrets.get("mexc-futures-access"))
-      : "";
-    const secret = authenticated
-      ? unsafeReveal(await config.secrets.get("mexc-futures-secret"))
-      : "";
+    const apiKey =
+      credentialNames === null ? "" : unsafeReveal(await config.secrets.get(credentialNames[0]));
+    const secret =
+      credentialNames === null ? "" : unsafeReveal(await config.secrets.get(credentialNames[1]));
 
     const exchange = new ccxt.mexc({
       apiKey,
@@ -153,8 +164,11 @@ export class MEXCFuturesClient {
       enableRateLimit: true,
       timeout: 10_000,
       options: {
+        adjustForTimeDifference: true,
         defaultType: "swap",
-        recvWindow: env.MEXC_RECV_WINDOW_MS,
+        // Private futures reads can fail if Windows clock skew is >5s. Keep
+        // boot strict elsewhere, but give the live account panel room to read.
+        recvWindow: Math.max(env.MEXC_RECV_WINDOW_MS, 60_000),
       },
       urls: {
         api: {
@@ -166,6 +180,18 @@ export class MEXCFuturesClient {
     } as ConstructorParameters<typeof ccxt.mexc>[0]) as Exchange;
 
     return new MEXCFuturesClient(exchange, baseUrl);
+  }
+
+  private async ensurePrivateClockSync(): Promise<void> {
+    const exchangeWithClock = this.exchange as Exchange & {
+      loadTimeDifference?: () => Promise<unknown>;
+    };
+    if (typeof exchangeWithClock.loadTimeDifference !== "function") return;
+    this.privateClockSync ??= exchangeWithClock
+      .loadTimeDifference()
+      .then(() => undefined)
+      .catch(() => undefined);
+    await this.privateClockSync;
   }
 
   /**
@@ -187,9 +213,7 @@ export class MEXCFuturesClient {
       const url = `${this.baseUrl}/api/v1/contract/ping`;
       const resp = await fetch(url);
       if (!resp.ok) {
-        throw new Error(
-          `MEXC futures /ping failed: HTTP ${resp.status} from ${url}`,
-        );
+        throw new Error(`MEXC futures /ping failed: HTTP ${resp.status} from ${url}`);
       }
       raw = await resp.json();
     }
@@ -197,9 +221,7 @@ export class MEXCFuturesClient {
     // Parse through the futures-specific schema first, then adapt.
     const parsed = MexcFuturesPingSchema.parse(raw);
     if (!parsed.success) {
-      throw new Error(
-        `MEXC futures /ping returned success=false (code=${parsed.code})`,
-      );
+      throw new Error(`MEXC futures /ping returned success=false (code=${parsed.code})`);
     }
     // Unified shape the boot sequence expects.
     return MexcPingResponseSchema.parse({ serverTime: parsed.data });
@@ -212,15 +234,12 @@ export class MEXCFuturesClient {
    * start/end window because the API exposes a time range rather than a direct
    * `limit=N` parameter.
    */
-  async fetchCandles(
-    params: FetchFuturesCandlesParams,
-  ): Promise<MarketCandle[]> {
+  async fetchCandles(params: FetchFuturesCandlesParams): Promise<MarketCandle[]> {
     const contractSymbol = toMexcContractSymbol(params.symbol);
     const intervalMs = FUTURES_KLINE_INTERVAL_MS[params.interval];
     const limit = Math.min(Math.max(Math.trunc(params.limit ?? 200), 2), 500);
     const endSeconds = Math.floor(Date.now() / 1000);
-    const startSeconds =
-      endSeconds - Math.ceil((intervalMs / 1000) * limit);
+    const startSeconds = endSeconds - Math.ceil((intervalMs / 1000) * limit);
     const url =
       `${this.baseUrl}/api/v1/contract/kline/${contractSymbol}` +
       `?interval=${params.interval}&start=${startSeconds}&end=${endSeconds}`;
@@ -232,9 +251,7 @@ export class MEXCFuturesClient {
 
     const parsed = MexcFuturesKlineResponseSchema.parse(await resp.json());
     if (!parsed.success) {
-      throw new Error(
-        `MEXC futures kline returned success=false (code=${parsed.code})`,
-      );
+      throw new Error(`MEXC futures kline returned success=false (code=${parsed.code})`);
     }
 
     const candles = parsed.data.time.map((openTimeSec, index) => ({
@@ -255,16 +272,12 @@ export class MEXCFuturesClient {
    * not a write-path unlock: it only feeds style/fingerprint/accountability
    * analytics from Matt's actual BTC/ETH/SOL futures behavior.
    */
-  async fetchMyTradesPage(
-    params: FetchFuturesTradesPageParams,
-  ): Promise<ImportedTrade[]> {
+  async fetchMyTradesPage(params: FetchFuturesTradesPageParams): Promise<ImportedTrade[]> {
+    await this.ensurePrivateClockSync();
     const ccxtSymbol = toCcxtSwapSymbol(params.symbol);
-    const raw = await this.exchange.fetchMyTrades(
-      ccxtSymbol,
-      params.since,
-      params.limit,
-      { type: "swap" },
-    );
+    const raw = await this.exchange.fetchMyTrades(ccxtSymbol, params.since, params.limit, {
+      type: "swap",
+    });
 
     const rows = raw.map((item) => {
       const trade = asRecord(item);
@@ -300,20 +313,84 @@ export class MEXCFuturesClient {
   }
 
   /**
+   * Read-only authenticated futures open orders for the cockpit exposure panel.
+   * This intentionally does not unlock any write path; it only lets the web app
+   * show resting BTC/ETH/SOL orders next to current positions.
+   */
+  async fetchOpenOrders(
+    params: FetchFuturesOpenOrdersParams = {},
+  ): Promise<MexcFuturesOpenOrder[]> {
+    await this.ensurePrivateClockSync();
+    const symbols = params.symbols ?? SUPPORTED_FUTURES_SIGNAL_SYMBOLS;
+    const fetchOpenOrders = (
+      this.exchange as unknown as {
+        fetchOpenOrders: (
+          symbol?: string,
+          since?: number,
+          limit?: number,
+          params?: unknown,
+        ) => Promise<unknown[]>;
+      }
+    ).fetchOpenOrders;
+
+    const pages = await Promise.all(
+      symbols.map(async (symbol) => {
+        const ccxtSymbol = toCcxtSwapSymbol(symbol);
+        return await fetchOpenOrders.call(this.exchange, ccxtSymbol, undefined, undefined, {
+          type: "swap",
+        });
+      }),
+    );
+
+    return pages.flat().flatMap((item) => {
+      const order = asRecord(item);
+      const info = asRecord(order.info);
+      const symbol = fromCcxtSwapSymbol(order.symbol);
+      if (symbol === null) return [];
+      const side = asString(order.side).toLowerCase();
+      if (side !== "buy" && side !== "sell") return [];
+      const amount = asOptionalNumber(order.amount);
+      const filled = asOptionalNumber(order.filled);
+      const cost = asOptionalNumber(order.cost);
+      const price = asOptionalNumber(order.price, "positive");
+      const timestamp = asOptionalNumber(order.timestamp);
+      const normalized = {
+        id: asString(order.id) || undefined,
+        clientOrderId: asString(order.clientOrderId) || undefined,
+        symbol,
+        side,
+        type: asString(order.type, "unknown"),
+        status: asString(order.status) || undefined,
+        ...(amount !== undefined ? { amount } : {}),
+        ...(filled !== undefined ? { filled } : {}),
+        ...(cost !== undefined ? { cost } : {}),
+        ...(price !== undefined ? { price } : {}),
+        ...(timestamp !== undefined ? { timestamp } : {}),
+        rawResponse: JSON.stringify(Object.keys(info).length > 0 ? info : order),
+      };
+      return [MexcFuturesOpenOrderSchema.parse(normalized)];
+    });
+  }
+
+  /**
    * Read-only authenticated futures account snapshot for live-time coaching.
    * Normalizes USDT margin balance and currently-open BTC/ETH/SOL positions.
    * This is deliberately observational; no futures write methods are unlocked.
    */
   async fetchAccountSnapshot(): Promise<MexcFuturesAccountSnapshot> {
-    const [rawBalance, rawPositions] = await Promise.all([
+    await this.ensurePrivateClockSync();
+    const [rawBalance, rawPositions, openOrders] = await Promise.all([
       this.exchange.fetchBalance({ type: "swap" }),
       // CCXT's Exchange type can lag exchange-specific support; MEXC swap has it.
-      (this.exchange as unknown as {
-        fetchPositions: (symbols?: string[], params?: unknown) => Promise<unknown[]>;
-      }).fetchPositions(
+      (
+        this.exchange as unknown as {
+          fetchPositions: (symbols?: string[], params?: unknown) => Promise<unknown[]>;
+        }
+      ).fetchPositions(
         SUPPORTED_FUTURES_SIGNAL_SYMBOLS.map((symbol) => toCcxtSwapSymbol(symbol)),
         { type: "swap" },
       ),
+      this.fetchOpenOrders(),
     ]);
 
     const balance = MexcBalanceResponseSchema.parse(rawBalance);
@@ -325,16 +402,29 @@ export class MEXCFuturesClient {
       if (contracts <= 0) return [];
       const info = asRecord(position.info);
       const side = asString(position.side).toLowerCase();
+      const leverage = asOptionalNumber(position.leverage, "positive") ?? asNumber(info.leverage);
+      const entryPrice =
+        asOptionalNumber(position.entryPrice, "positive") ??
+        asNumber(info.holdAvgPrice, asNumber(info.holdAvgPriceFullyScale));
+      const markPrice =
+        asOptionalNumber(position.markPrice, "positive") ??
+        asNumber(info.markPrice, asNumber(info.fairPrice, entryPrice));
+      const marginQuote = asNumber(info.im, asNumber(info.oim));
+      const notionalQuote =
+        asOptionalNumber(position.notional, "positive") ??
+        (marginQuote > 0 && leverage > 0 ? marginQuote * leverage : 0);
+      const liquidationPrice =
+        asOptionalNumber(position.liquidationPrice, "positive") ?? asNumber(info.liquidatePrice);
       return {
         symbol,
         side: side === "short" ? "short" : "long",
         contracts,
-        notionalQuote: asNumber(position.notional),
-        entryPrice: asNumber(position.entryPrice),
-        markPrice: asNumber(position.markPrice),
+        notionalQuote,
+        entryPrice,
+        markPrice,
         unrealizedPnl: asNumber(position.unrealizedPnl),
-        leverage: asNumber(position.leverage),
-        liquidationPrice: asNumber(position.liquidationPrice),
+        leverage,
+        liquidationPrice,
         marginMode: asString(position.marginMode) || undefined,
         rawResponse: JSON.stringify(Object.keys(info).length > 0 ? info : position),
       };
@@ -347,6 +437,7 @@ export class MEXCFuturesClient {
         used: asNumber(balance.used.USDT),
       },
       positions,
+      openOrders,
       fetchedAtMs: Date.now(),
     });
   }
@@ -366,35 +457,22 @@ export class MEXCFuturesClient {
     const tickerUrl = `${this.baseUrl}/api/v1/contract/ticker?symbol=${contractSymbol}`;
     const fundingUrl = `${this.baseUrl}/api/v1/contract/funding_rate/${contractSymbol}`;
 
-    const [tickerResp, fundingResp] = await Promise.all([
-      fetch(tickerUrl),
-      fetch(fundingUrl),
-    ]);
+    const [tickerResp, fundingResp] = await Promise.all([fetch(tickerUrl), fetch(fundingUrl)]);
 
     if (!tickerResp.ok) {
-      throw new Error(
-        `MEXC futures ticker failed: HTTP ${tickerResp.status} from ${tickerUrl}`,
-      );
+      throw new Error(`MEXC futures ticker failed: HTTP ${tickerResp.status} from ${tickerUrl}`);
     }
     if (!fundingResp.ok) {
-      throw new Error(
-        `MEXC futures funding failed: HTTP ${fundingResp.status} from ${fundingUrl}`,
-      );
+      throw new Error(`MEXC futures funding failed: HTTP ${fundingResp.status} from ${fundingUrl}`);
     }
 
     const ticker = MexcFuturesTickerResponseSchema.parse(await tickerResp.json());
-    const funding = MexcFuturesFundingRateResponseSchema.parse(
-      await fundingResp.json(),
-    );
+    const funding = MexcFuturesFundingRateResponseSchema.parse(await fundingResp.json());
     if (!ticker.success) {
-      throw new Error(
-        `MEXC futures ticker returned success=false (code=${ticker.code})`,
-      );
+      throw new Error(`MEXC futures ticker returned success=false (code=${ticker.code})`);
     }
     if (!funding.success) {
-      throw new Error(
-        `MEXC futures funding returned success=false (code=${funding.code})`,
-      );
+      throw new Error(`MEXC futures funding returned success=false (code=${funding.code})`);
     }
 
     return MexcFuturesMarketContextSchema.parse({
@@ -405,8 +483,7 @@ export class MEXCFuturesClient {
       basisPct:
         ticker.data.lastPrice <= 0
           ? 0
-          : (ticker.data.fairPrice - ticker.data.indexPrice) /
-            ticker.data.lastPrice,
+          : (ticker.data.fairPrice - ticker.data.indexPrice) / ticker.data.lastPrice,
       fundingRate: funding.data.fundingRate,
       nextSettleTime: funding.data.nextSettleTime,
       collectCycleHours: funding.data.collectCycle,

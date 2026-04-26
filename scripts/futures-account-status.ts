@@ -1,12 +1,9 @@
 import { MEXCFuturesClient } from "@kr8tiv/mexc-futures";
-import {
-  WindowsCredentialManagerProvider,
-  type SecretProvider,
-} from "@kr8tiv/secrets";
+import { type SecretProvider, WindowsCredentialManagerProvider } from "@kr8tiv/secrets";
 import type { MexcFuturesAccountSnapshot } from "@kr8tiv/shared-schemas";
 
 export const FUTURES_STATUS_MISSING_CREDENTIALS_MESSAGE =
-  "Missing futures credentials in Windows Credential Manager: mexc-futures-access and/or mexc-futures-secret. Add read-only futures API credentials before using pnpm futures:status.";
+  "Missing MEXC credentials in Windows Credential Manager: provide mexc-futures-access/secret or a full-permission mexc-spot-access/secret key pair before using pnpm futures:status.";
 
 export type FuturesAccountStatus =
   | {
@@ -16,6 +13,11 @@ export type FuturesAccountStatus =
   | {
       available: false;
       reason: "missing_credentials";
+      message: string;
+    }
+  | {
+      available: false;
+      reason: "api_rejected";
       message: string;
     };
 
@@ -34,12 +36,14 @@ export async function readFuturesAccountStatus(
     options.createClient ??
     ((provider: SecretProvider) => MEXCFuturesClient.create({ secrets: provider }));
 
-  const [hasAccess, hasSecret] = await Promise.all([
+  const [hasFuturesAccess, hasFuturesSecret, hasSpotAccess, hasSpotSecret] = await Promise.all([
     secrets.has("mexc-futures-access"),
     secrets.has("mexc-futures-secret"),
+    secrets.has("mexc-spot-access"),
+    secrets.has("mexc-spot-secret"),
   ]);
 
-  if (!hasAccess || !hasSecret) {
+  if (!(hasFuturesAccess && hasFuturesSecret) && !(hasSpotAccess && hasSpotSecret)) {
     return {
       available: false,
       reason: "missing_credentials",
@@ -47,9 +51,17 @@ export async function readFuturesAccountStatus(
     };
   }
 
-  const client = await createClient(secrets);
-  return {
-    available: true,
-    snapshot: await client.fetchAccountSnapshot(),
-  };
+  try {
+    const client = await createClient(secrets);
+    return {
+      available: true,
+      snapshot: await client.fetchAccountSnapshot(),
+    };
+  } catch (err) {
+    return {
+      available: false,
+      reason: "api_rejected",
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
 }

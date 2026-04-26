@@ -2,8 +2,8 @@
 // Run via: pnpm setup:credentials
 // Prompts for each Phase 1 required secret and writes to Windows Credential Manager.
 
-import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import readline from "node:readline/promises";
 import { WindowsCredentialManagerProvider } from "@kr8tiv/secrets";
 import type { SecretName } from "@kr8tiv/shared-types";
 
@@ -11,9 +11,14 @@ const REQUIRED: readonly SecretName[] = [
   "mexc-spot-access",
   "mexc-spot-secret",
   "mexc-whitelist-ip",
-  // Phase 6 will add: "mexc-futures-access", "mexc-futures-secret"
 ];
-const OPTIONAL_FUTURE: readonly SecretName[] = ["telegram-bot-token"];
+const OPTIONAL_CURRENT: readonly SecretName[] = [
+  // Needed for the futures dashboard to read live positions/open orders.
+  "mexc-futures-access",
+  "mexc-futures-secret",
+  // Needed only if Telegram dispatch is enabled.
+  "telegram-bot-token",
+];
 
 async function main(): Promise<void> {
   const rl = readline.createInterface({ input: stdin, output: stdout });
@@ -37,8 +42,10 @@ async function main(): Promise<void> {
     process.stdout.write(`  (set ${value.length} chars)\n`);
   }
 
-  process.stdout.write("\nOptional future secrets (safe to skip for now)\n");
-  for (const name of OPTIONAL_FUTURE) {
+  process.stdout.write(
+    "\nOptional current integrations (safe to skip; features degrade read-only/offline)\n",
+  );
+  for (const name of OPTIONAL_CURRENT) {
     const exists = await provider.has(name);
     const prompt = exists
       ? `${name}  [already set - enter to keep, paste new value to replace]: `
@@ -54,9 +61,7 @@ async function main(): Promise<void> {
 
   rl.close();
 
-  const results = await Promise.all(
-    REQUIRED.map(async (n) => ({ n, ok: await provider.has(n) })),
-  );
+  const results = await Promise.all(REQUIRED.map(async (n) => ({ n, ok: await provider.has(n) })));
   const missing = results.filter((x) => !x.ok).map((x) => x.n);
 
   if (missing.length > 0) {

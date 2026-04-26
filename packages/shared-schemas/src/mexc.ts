@@ -76,9 +76,7 @@ export const MexcFuturesKlineResponseSchema = z.object({
   code: z.coerce.number(),
   data: MexcFuturesKlineDataSchema,
 });
-export type MexcFuturesKlineResponse = z.infer<
-  typeof MexcFuturesKlineResponseSchema
->;
+export type MexcFuturesKlineResponse = z.infer<typeof MexcFuturesKlineResponseSchema>;
 
 /**
  * Unified ping response used by both MEXCSpotClient.ping() and MEXCFuturesClient.ping().
@@ -129,6 +127,22 @@ export const MexcFuturesPositionSchema = z.object({
 });
 export type MexcFuturesPosition = z.infer<typeof MexcFuturesPositionSchema>;
 
+export const MexcFuturesOpenOrderSchema = z.object({
+  id: z.string().min(1).optional(),
+  clientOrderId: z.string().min(1).optional(),
+  symbol: AccountableSymbolSchema,
+  side: z.enum(["buy", "sell"]),
+  type: z.string().min(1),
+  status: z.string().min(1).optional(),
+  amount: z.number().nonnegative().optional(),
+  filled: z.number().nonnegative().optional(),
+  cost: z.number().nonnegative().optional(),
+  price: z.number().positive().optional(),
+  timestamp: z.number().int().nonnegative().optional(),
+  rawResponse: z.string().optional(),
+});
+export type MexcFuturesOpenOrder = z.infer<typeof MexcFuturesOpenOrderSchema>;
+
 export const MexcFuturesAccountSnapshotSchema = z.object({
   usdt: z.object({
     total: z.number().nonnegative(),
@@ -136,11 +150,10 @@ export const MexcFuturesAccountSnapshotSchema = z.object({
     used: z.number().nonnegative(),
   }),
   positions: z.array(MexcFuturesPositionSchema),
+  openOrders: z.array(MexcFuturesOpenOrderSchema).default([]),
   fetchedAtMs: z.number().int().positive(),
 });
-export type MexcFuturesAccountSnapshot = z.infer<
-  typeof MexcFuturesAccountSnapshotSchema
->;
+export type MexcFuturesAccountSnapshot = z.infer<typeof MexcFuturesAccountSnapshotSchema>;
 
 const MexcFuturesTickerDataSchema = z.object({
   symbol: z.string().min(1),
@@ -165,9 +178,7 @@ export const MexcFuturesTickerResponseSchema = z.object({
   code: z.coerce.number(),
   data: MexcFuturesTickerDataSchema,
 });
-export type MexcFuturesTickerResponse = z.infer<
-  typeof MexcFuturesTickerResponseSchema
->;
+export type MexcFuturesTickerResponse = z.infer<typeof MexcFuturesTickerResponseSchema>;
 
 const MexcFuturesFundingRateDataSchema = z.object({
   symbol: z.string().min(1),
@@ -184,9 +195,7 @@ export const MexcFuturesFundingRateResponseSchema = z.object({
   code: z.coerce.number(),
   data: MexcFuturesFundingRateDataSchema,
 });
-export type MexcFuturesFundingRateResponse = z.infer<
-  typeof MexcFuturesFundingRateResponseSchema
->;
+export type MexcFuturesFundingRateResponse = z.infer<typeof MexcFuturesFundingRateResponseSchema>;
 
 export const MexcFuturesMarketContextSchema = z.object({
   symbol: AccountableSymbolSchema,
@@ -205,9 +214,7 @@ export const MexcFuturesMarketContextSchema = z.object({
   low24Price: z.number().positive(),
   timestamp: z.number().int().positive(),
 });
-export type MexcFuturesMarketContext = z.infer<
-  typeof MexcFuturesMarketContextSchema
->;
+export type MexcFuturesMarketContext = z.infer<typeof MexcFuturesMarketContextSchema>;
 
 // ---------------------------------------------------------------------------
 // Phase 2 additions — order / cancel / fill / exchangeInfo response shapes.
@@ -236,9 +243,7 @@ export const MexcOrderResponseSchema = z.object({
   filled: z.number().nonnegative().optional(), // base-asset executed qty
   cost: z.number().nonnegative().optional(), // quote-asset notional cost
   price: z.number().positive().optional(), // avg fill price
-  fee: z
-    .object({ cost: z.number().nonnegative(), currency: z.string().min(1) })
-    .optional(),
+  fee: z.object({ cost: z.number().nonnegative(), currency: z.string().min(1) }).optional(),
   info: z.unknown(), // raw MEXC response (origClientOrderId, executedQty, cummulativeQuoteQty, etc.)
   timestamp: z.number().int().nonnegative().optional(),
 });

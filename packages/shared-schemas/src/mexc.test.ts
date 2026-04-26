@@ -7,6 +7,7 @@ import {
   MexcFuturesAccountSnapshotSchema,
   MexcFuturesFundingRateResponseSchema,
   MexcFuturesMarketContextSchema,
+  MexcFuturesOpenOrderSchema,
   MexcFuturesPingSchema,
   MexcFuturesPositionSchema,
   MexcFuturesTickerResponseSchema,
@@ -40,14 +41,10 @@ describe("MexcFuturesPingSchema", () => {
     expect(v.data).toBe(1645539742000);
   });
   it("accepts success:false (caller decides what to do)", () => {
-    expect(() =>
-      MexcFuturesPingSchema.parse({ success: false, code: 0, data: 1 }),
-    ).not.toThrow();
+    expect(() => MexcFuturesPingSchema.parse({ success: false, code: 0, data: 1 })).not.toThrow();
   });
   it("rejects missing data", () => {
-    expect(() =>
-      MexcFuturesPingSchema.parse({ success: true, code: 0 }),
-    ).toThrow();
+    expect(() => MexcFuturesPingSchema.parse({ success: true, code: 0 })).toThrow();
   });
 });
 
@@ -110,8 +107,42 @@ describe("MexcFuturesPositionSchema", () => {
   });
 });
 
+describe("MexcFuturesOpenOrderSchema", () => {
+  it("parses a normalized MEXC futures open order for a supported symbol", () => {
+    const parsed = MexcFuturesOpenOrderSchema.parse({
+      id: "order-123",
+      clientOrderId: "client-123",
+      symbol: "SOLUSDT",
+      side: "buy",
+      type: "limit",
+      status: "open",
+      amount: 4,
+      filled: 1,
+      cost: 120,
+      price: 30,
+      timestamp: 1_700_000_000_000,
+      rawResponse: "{}",
+    });
+    expect(parsed.symbol).toBe("SOLUSDT");
+    expect(parsed.filled).toBe(1);
+  });
+
+  it("rejects unsupported futures open-order symbols", () => {
+    expect(() =>
+      MexcFuturesOpenOrderSchema.parse({
+        symbol: "DOGEUSDT",
+        side: "buy",
+        type: "limit",
+        status: "open",
+        amount: 1,
+        filled: 0,
+      }),
+    ).toThrow();
+  });
+});
+
 describe("MexcFuturesAccountSnapshotSchema", () => {
-  it("parses USDT margin balance and positions", () => {
+  it("parses USDT margin balance, positions, and open orders", () => {
     const parsed = MexcFuturesAccountSnapshotSchema.parse({
       usdt: { total: 100, free: 80, used: 20 },
       positions: [
@@ -126,10 +157,22 @@ describe("MexcFuturesAccountSnapshotSchema", () => {
           leverage: 30,
         },
       ],
+      openOrders: [
+        {
+          id: "order-1",
+          symbol: "ETHUSDT",
+          side: "sell",
+          type: "limit",
+          status: "open",
+          amount: 0.25,
+          filled: 0,
+        },
+      ],
       fetchedAtMs: 1_700_000_000_000,
     });
     expect(parsed.usdt.free).toBe(80);
     expect(parsed.positions[0]?.symbol).toBe("ETHUSDT");
+    expect(parsed.openOrders[0]?.side).toBe("sell");
   });
 });
 
@@ -253,9 +296,7 @@ describe("MexcOrderResponseSchema (Phase 2)", () => {
   });
 
   it("requires symbol, side, and type", () => {
-    expect(() =>
-      MexcOrderResponseSchema.parse({ symbol: "ETH/USDT", side: "buy" }),
-    ).toThrow();
+    expect(() => MexcOrderResponseSchema.parse({ symbol: "ETH/USDT", side: "buy" })).toThrow();
   });
 });
 
