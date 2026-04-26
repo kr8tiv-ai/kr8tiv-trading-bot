@@ -2767,14 +2767,52 @@ function renderApp(): string {
           "<p>Fetched " + new Date(s.fetchedAtMs || Date.now()).toLocaleTimeString() + "</p>" +
         "</article>" +
         (positions.length
-          ? positions.map((p) =>
-              "<article class='entry'>" +
-                "<div class='entry-head'><strong>" + escapeHtml(p.symbol) + " " + escapeHtml(String(p.side).toUpperCase()) + "</strong><span class='pill " + (Number(p.unrealizedPnl || 0) >= 0 ? "ok" : "block") + "'>" + money(p.unrealizedPnl) + "</span></div>" +
-                "<p><span class='pill'>" + Number(p.leverage || 0).toFixed(0) + "x</span> <span class='pill'>notional " + Number(p.notionalQuote || 0).toFixed(2) + "</span> <span class='pill'>entry " + Number(p.entryPrice || 0).toFixed(4) + "</span> <span class='pill'>mark " + Number(p.markPrice || 0).toFixed(4) + "</span></p>" +
-                (p.liquidationPrice ? "<p><span class='pill block'>liq " + Number(p.liquidationPrice || 0).toFixed(4) + "</span> <span class='pill'>" + escapeHtml(p.marginMode || "margin") + "</span></p>" : "") +
-                "<div class='quick-row' style='margin-top:10px'><button class='chip trade-firewall' type='button' data-use-position='" + encodeURIComponent(JSON.stringify(p)) + "'>Use position</button><span class='pill info'>loads intake + suggested stop/TP</span></div>" +
-              "</article>"
-            ).join("")
+          ? positions
+              .map((p) => {
+                const mark = Number(p.markPrice || p.entryPrice || 0);
+                const liquidation = Number(p.liquidationPrice || 0);
+                const liqDistancePct =
+                  mark > 0 && liquidation > 0
+                    ? (Math.abs(mark - liquidation) / mark) * 100
+                    : null;
+                return (
+                  "<article class='entry'>" +
+                  "<div class='entry-head'><strong>" +
+                  escapeHtml(p.symbol) +
+                  " " +
+                  escapeHtml(String(p.side).toUpperCase()) +
+                  "</strong><span class='pill " +
+                  (Number(p.unrealizedPnl || 0) >= 0 ? "ok" : "block") +
+                  "'>" +
+                  money(p.unrealizedPnl) +
+                  "</span></div>" +
+                  "<p><span class='pill'>" +
+                  Number(p.leverage || 0).toFixed(0) +
+                  "x</span> <span class='pill'>notional " +
+                  Number(p.notionalQuote || 0).toFixed(2) +
+                  "</span> <span class='pill'>entry " +
+                  Number(p.entryPrice || 0).toFixed(4) +
+                  "</span> <span class='pill'>mark " +
+                  mark.toFixed(4) +
+                  "</span></p>" +
+                  (liquidation
+                    ? "<p><span class='pill block'>liq " +
+                      liquidation.toFixed(4) +
+                      "</span> <span class='pill " +
+                      (liqDistancePct !== null && liqDistancePct < 1 ? "block" : "pending") +
+                      "'>distance to liq " +
+                      (liqDistancePct === null ? "?" : liqDistancePct.toFixed(2) + "%") +
+                      "</span> <span class='pill'>" +
+                      escapeHtml(p.marginMode || "margin") +
+                      "</span></p>"
+                    : "") +
+                  "<div class='quick-row' style='margin-top:10px'><button class='chip trade-firewall' type='button' data-use-position='" +
+                  encodeURIComponent(JSON.stringify(p)) +
+                  "'>Use position</button><span class='pill info'>loads intake + suggested stop/TP</span></div>" +
+                  "</article>"
+                );
+              })
+              .join("")
           : "<article class='entry'><div class='entry-head'><strong>Open positions</strong><span class='pill ok'>flat</span></div><p>No BTC/ETH/SOL futures positions reported.</p></article>") +
         (openOrders.length
           ? "<article class='entry'><div class='entry-head'><strong>Open orders</strong><span class='pill pending'>" + openOrders.length + " resting</span></div>" +
@@ -3502,6 +3540,7 @@ function renderApp(): string {
     setInterval(() => {
       void loadHealth();
       void loadLeak();
+      void loadAccountStatus();
       void loadPaperOrders();
       void loadHeatMap();
     }, 60_000);

@@ -27,6 +27,12 @@ describe("trader cockpit UI contract", () => {
     expect(source).toContain("loadPositionIntoIntake");
   });
 
+  it("keeps the live account panel useful during active leverage trades", async () => {
+    const source = await readAppSource();
+    expect(source).toContain("distance to liq");
+    expect(source).toContain("void loadAccountStatus();");
+  });
+
   it("ships a premium cockpit shell for the dashboard surface", async () => {
     const source = await readAppSource();
     expect(source).toContain("cockpit-shell");
